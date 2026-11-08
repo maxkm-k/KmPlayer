@@ -24,12 +24,12 @@ jobs:
           flutter-version: '3.24.5'
           channel: 'stable'
 
-      - name: Generate Android Scaffolding & Fix Gradle Properties
+      - name: Setup Android Scaffolding & Fix Version Codes
         run: |
-          # 1. Scaffold native android directory
+          # 1. Generate standard Android platform files
           flutter create --platforms=android --project-name km_player .
 
-          # 2. Configure explicit SDK versions compatible with all plugins
+          # 2. Write stable android/app/build.gradle with direct version numbers
           cat << 'EOF' > android/app/build.gradle
           plugins {
               id "com.android.application"
@@ -55,8 +55,8 @@ jobs:
                   applicationId "com.km.km_player"
                   minSdk 29
                   targetSdk 34
-                  versionCode flutterVersionCode.toInteger()
-                  versionName flutterVersionName
+                  versionCode 1
+                  versionName "1.0.0"
               }
 
               buildTypes {
