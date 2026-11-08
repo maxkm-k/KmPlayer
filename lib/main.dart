@@ -1,0 +1,185 @@
+import 'dart:io';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() {
+  runApp(const KmPlayerApp());
+}
+
+class KmPlayerApp extends StatelessWidget {
+  const KmPlayerApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Km Player',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark(useMaterial3: true),
+      home: const VideoPlayerScreen(),
+    );
+  }
+}
+
+class VideoPlayerScreen extends StatefulWidget {
+  const VideoPlayerScreen({super.key});
+
+  @override
+  State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
+}
+
+class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+  VideoPlayerController? _videoPlayerController;
+  ChewieController? _chewieController;
+  List> _playlist = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPlaylist();
+  }
+
+  Future<void> _loadPlaylist() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? data = prefs.getString('saved_playlist');
+    if (data != null) {
+      final List decoded = jsonDecode(data);
+      setState(() {
+        _playlist = decoded
+            .map((e) => Map<String, String>.from(e as Map))
+            .toList();
+      });
+    }
+  }
+
+  Future<void> _savePlaylist() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('saved_playlist', jsonEncode(_playlist));
+  }
+
+  Future<void> _pickAndPlayVideo() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.video,
+      allowMultiple: false,
+    );
+
+    if (result != null && result.files.single.path != null) {
+      String path = result.files.single.path!;
+      String name = result.files.single.name;
+
+      _playVideo(path);
+
+      setState(() {
+        _playlist.removeWhere((item) => item['path'] == path);
+        _playlist.insert(0, {'name': name, 'path': path});
+      });
+      _savePlaylist();
+    }
+  }
+
+  void _playVideo(String path) {
+    _chewieController?.dispose();
+    _videoPlayerController?.dispose();
+
+    _videoPlayerController = VideoPlayerController.file(File(path))
+      ..initialize().then((_) {
+        setState(() {
+          _chewieController = ChewieController(
+            videoPlayerController: _videoPlayerController!,
+            autoPlay: true,
+            looping: false,
+            aspectRatio: _videoPlayerController!.value.aspectRatio,
+            allowPlaybackSpeedChanging: true,
+            allowFullScreen: true,
+          );
+        });
+      });
+  }
+
+  @override
+  void dispose() {
+    _videoPlayerController?.dispose();
+    _chewieController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Km Player'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.video_file),
+            tooltip: 'Pick Video',
+            onPressed: _pickAndPlayVideo,
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Container(
+            height: 250,
+            color: Colors.black,
+            child: _chewieController != null &&
+                    _chewieController!.videoPlayerController.value.isInitialized
+                ? Chewie(controller: _chewieController!)
+                : const Center(
+                    child: Text(
+                      'No Video Playing\nTap the icon above to choose video',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Playlist & History',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _playlist.clear();
+                    });
+                    _savePlaylist();
+                  },
+                  child: const Text('Clear', style: TextStyle(color: Colors.redAccent)),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _playlist.isEmpty
+                ? const Center(
+                    child: Text('No videos played yet', style: TextStyle(color: Colors.grey)),
+                  )
+                : ListView.builder(
+                    itemCount: _playlist.length,
+                    itemBuilder: (context, index) {
+                      final item = _playlist[index];
+                      return ListTile(
+                        leading: const Icon(Icons.play_circle_fill, color: Colors.blueAccent),
+                        title: Text(item['name'] ?? 'Unknown Video', maxLines: 1),
+                        subtitle: Text(item['path'] ?? '', maxLines: 1),
+                        onTap: () {
+                          if (item['path'] != null) {
+                            _playVideo(item['path']!);
+                          }
+                        },
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
