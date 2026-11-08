@@ -24,6 +24,12 @@ jobs:
           flutter-version: '3.24.5'
           channel: 'stable'
 
+      - name: Generate Android Scaffolding
+        run: |
+          flutter create --platforms=android .
+          # Ensure Android 10+ (API 29 minimum)
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 29/g' android/app/build.gradle
+
       - name: Get Dependencies
         run: flutter pub get
 
