@@ -23,19 +23,17 @@ jobs:
         with:
           gradle-version: '8.4'
 
-      - name: Ensure minimal resources exist
+      - name: Generate Essential Res Files
         run: |
           mkdir -p app/src/main/res/values
-          mkdir -p app/src/main/res/mipmap-anydpi-v26
+          mkdir -p app/src/main/res/mipmap-hdpi
           
-          # Basic strings
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
               <string name="app_name">Km Player</string>
           </resources>
           EOF
 
-          # Standard theme fallback
           cat << 'EOF' > app/src/main/res/values/themes.xml
           <resources>
               <style name="Theme.KmPlayer" parent="Theme.Material3.DayNight.NoActionBar" />
@@ -43,10 +41,10 @@ jobs:
           EOF
 
       - name: Build APK with Gradle
-        run: gradle assembleRelease --stacktrace --info --no-daemon
+        run: gradle assembleDebug --stacktrace --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: KmPlayer-Release
-          path: app/build/outputs/apk/release/*.apk
+          name: KmPlayer-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
