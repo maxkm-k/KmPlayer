@@ -1,16 +1,39 @@
-your-repo-name/
-├── .github/
-│   └── workflows/
-│       └── build.yml      <-- Place the workflow file here
-├── app/
-│   ├── build.gradle
-│   └── src/
-│       └── main/
-│           ├── AndroidManifest.xml
-│           ├── java/
-│           │   └── com/
-│               └── km/
-│                   └── videoplayer/
-│                       ├── MainActivity.kt
-│                       └── PlaylistAdapter.kt
-└── ... (other layout and source files)
+name: Build Video Player APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x ./gradlew || true
+
+      - name: Build APK with Gradle
+        run: |
+          if [ -f "gradlew" ]; then
+            ./gradlew assembleRelease
+          else
+            gradle assembleRelease
+          fi
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KmPlayer-Release
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
