@@ -23,56 +23,24 @@ jobs:
         with:
           gradle-version: '8.4'
 
-      - name: Setup Complete Resource & Build Environment
+      - name: Create Minimal App Resources
         run: |
-          # 1. Ensure essential resource directories exist
           mkdir -p app/src/main/res/values
-          mkdir -p app/src/main/res/drawable
-          mkdir -p app/src/main/res/mipmap-hdpi
-
-          # 2. Add minimal theme and color resources
-          cat << 'EOF' > app/src/main/res/values/themes.xml
-          <resources xmlns:tools="http://schemas.android.com/tools">
-              <style name="Theme.KmPlayer" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-                  <item name="colorPrimary">#2196F3</item>
-                  <item name="colorPrimaryVariant">#1976D2</item>
-                  <item name="colorOnPrimary">#FFFFFF</item>
-              </style>
-          </resources>
-          EOF
-
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
               <string name="app_name">Km Player</string>
           </resources>
           EOF
-
-          # 3. Add dummy launcher icons so manifest validation passes
-          cat << 'EOF' > app/src/main/res/drawable/ic_launcher_background.xml
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="108dp"
-              android:height="108dp"
-              android:viewportWidth="108"
-              android:viewportHeight="108">
-              <path
-                  android:fillColor="#121212"
-                  android:pathData="M0,0h108v108h-108z"/>
-          </vector>
-          EOF
-
-          # 4. Ensure root build.gradle exists
-          cat << 'EOF' > build.gradle
-          plugins {
-              id 'com.android.application' version '8.2.0' apply false
-              id 'org.jetbrains.kotlin.android' version '1.9.20' apply false
-          }
+          cat << 'EOF' > app/src/main/res/values/themes.xml
+          <resources>
+              <style name="Theme.KmPlayer" parent="Theme.Material3.DayNight.NoActionBar" />
+          </resources>
           EOF
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon || gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon
 
       - name: Upload APK Artifact
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: KmPlayer-Debug-APK
