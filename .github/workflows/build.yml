@@ -23,15 +23,30 @@ jobs:
         with:
           gradle-version: '8.4'
 
-      - name: Configure Android SDK Path
+      - name: Ensure minimal resources exist
         run: |
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/mipmap-anydpi-v26
+          
+          # Basic strings
+          cat << 'EOF' > app/src/main/res/values/strings.xml
+          <resources>
+              <string name="app_name">Km Player</string>
+          </resources>
+          EOF
+
+          # Standard theme fallback
+          cat << 'EOF' > app/src/main/res/values/themes.xml
+          <resources>
+              <style name="Theme.KmPlayer" parent="Theme.Material3.DayNight.NoActionBar" />
+          </resources>
+          EOF
 
       - name: Build APK with Gradle
-        run: gradle assembleRelease --no-daemon
+        run: gradle assembleRelease --stacktrace --info --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: KmPlayer-Release
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          path: app/build/outputs/apk/release/*.apk
