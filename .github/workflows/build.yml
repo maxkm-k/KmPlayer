@@ -18,220 +18,135 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Flutter
+      - name: Set up Flutter 3.24.5
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.6'
+          flutter-version: '3.24.5'
           channel: 'stable'
 
       - name: Scaffold & Build KmPlayer
         run: |
-          # 1. Create fresh project
           rm -rf km_player
           flutter create --org com.km --project-name km_player km_player
           cd km_player
 
-          # 2. Add video player and file picker dependencies
-          flutter pub add video_player chewie file_picker shared_preferences
+          # Lock dependencies to compatible versions
+          flutter pub add video_player:^2.9.2 chewie:^1.8.5 file_picker:^8.1.4 shared_preferences:^2.3.3
 
-          # 3. Configure Android 10+ (API 29 minimum) in build.gradle
+          # Set Android 10+ (API 29 minimum)
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 29/g' android/app/build.gradle
 
-          # 4. Write full video player UI & logic
-          cat << 'EOF' > lib/main.dart
-          import 'dart:io';
-          import 'dart:convert';
-          import 'package:flutter/material.dart';
-          import 'package:video_player/video_player.dart';
-          import 'package:chewie/chewie.dart';
-          import 'package:file_picker/file_picker.dart';
-          import 'package:shared_preferences/shared_preferences.dart';
-
-          void main() {
-            runApp(const KmPlayerApp());
-          }
-
-          class KmPlayerApp extends StatelessWidget {
-            const KmPlayerApp({super.key});
-
-            @override
-            Widget build(BuildContext context) {
-              return MaterialApp(
-                title: 'Km Player',
-                debugShowCheckedModeBanner: false,
-                theme: ThemeData.dark(useMaterial3: true),
-                home: const VideoPlayerScreen(),
-              );
-            }
-          }
-
-          class VideoPlayerScreen extends StatefulWidget {
-            const VideoPlayerScreen({super.key});
-
-            @override
-            State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
-          }
-
-          class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
-            VideoPlayerController? _videoPlayerController;
-            ChewieController? _chewieController;
-            List> _playlist = [];
-
-            @override
-            void initState() {
-              super.initState();
-              _loadPlaylist();
-            }
-
-            Future<void> _loadPlaylist() async {
-              final prefs = await SharedPreferences.getInstance();
-              final String? data = prefs.getString('saved_playlist');
-              if (data != null) {
-                setState(() {
-                  _playlist = List>.from(
-                    (jsonDecode(data) as List).map((e) => Map<String, String>.from(e))
-                  );
-                });
-              }
-            }
-
-            Future<void> _savePlaylist() async {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setString('saved_playlist', jsonEncode(_playlist));
-            }
-
-            Future<void> _pickAndPlayVideo() async {
-              FilePickerResult? result = await FilePicker.platform.pickFiles(
-                type: FileType.video,
-                allowMultiple: false,
-              );
-
-              if (result != null && result.files.single.path != null) {
-                String path = result.files.single.path!;
-                String name = result.files.single.name;
-
-                _playVideo(path);
-
-                setState(() {
-                  _playlist.removeWhere((item) => item['path'] == path);
-                  _playlist.insert(0, {'name': name, 'path': path});
-                });
-                _savePlaylist();
-              }
-            }
-
-            void _playVideo(String path) {
-              _chewieController?.dispose();
-              _videoPlayerController?.dispose();
-
-              _videoPlayerController = VideoPlayerController.file(File(path))
-                ..initialize().then((_) {
-                  setState(() {
-                    _chewieController = ChewieController(
-                      videoPlayerController: _videoPlayerController!,
-                      autoPlay: true,
-                      looping: false,
-                      aspectRatio: _videoPlayerController!.value.aspectRatio,
-                      allowPlaybackSpeedChanging: true,
-                      allowFullScreen: true,
-                      materialProgressColors: ChewieProgressColors(
-                        playedColor: Colors.blueAccent,
-                        handleColor: Colors.blue,
-                        backgroundColor: Colors.grey,
-                        bufferedColor: Colors.white24,
-                      ),
-                    );
-                  });
-                });
-            }
-
-            @override
-            void dispose() {
-              _videoPlayerController?.dispose();
-              _chewieController?.dispose();
-              super.dispose();
-            }
-
-            @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                appBar: AppBar(
-                  title: const Text('Km Player'),
-                  actions: [
-                    IconButton(
-                      icon: const Icon(Icons.video_file),
-                      tooltip: 'Pick Video',
-                      onPressed: _pickAndPlayVideo,
-                    ),
-                  ],
-                ),
-                body: Column(
-                  children: [
-                    Container(
-                      height: 250,
-                      color: Colors.black,
-                      child: _chewieController != null &&
-                              _chewieController!.videoPlayerController.value.isInitialized
-                          ? Chewie(controller: _chewieController!)
-                          : const Center(
-                              child: Text(
-                                'No Video Playing\nTap + to Choose Video',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: Colors.white70),
-                              ),
-                            ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Playlist & History',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              setState(() {
-                                _playlist.clear();
-                              });
-                              _savePlaylist();
-                            },
-                            child: const Text('Clear', style: TextStyle(color: Colors.redAccent)),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: _playlist.isEmpty
-                          ? const Center(
-                              child: Text('No videos played yet', style: TextStyle(color: Colors.grey)),
-                            )
-                          : ListView.builder(
-                              itemCount: _playlist.length,
-                              itemBuilder: (context, index) {
-                                final item = _playlist[index];
-                                return ListTile(
-                                  leading: const Icon(Icons.play_circle_fill, color: Colors.blueAccent),
-                                  title: Text(item['name'] ?? 'Unknown Video', maxLines: 1),
-                                  subtitle: Text(item['path'] ?? '', maxLines: 1),
-                                  onTap: () {
-                                    if (item['path'] != null) {
-                                      _playVideo(item['path']!);
-                                    }
-                                  },
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              );
-            }
-          }
+          # Write main.dart safely via base64 to avoid bash redirection errors
+          cat << 'EOF' | base64 -d > lib/main.dart
+          aW1wb3J0ICdkYXJ0OmlvJzsKaW1wb3J0ICdkYXJ0OmNvbnZlcnQnOwppbXBvcnQgJ3BhY2th
+          Z2U6Zmx1dHRlci9tYXRlcmlhbC5kYXJ0JzsKaW1wb3J0ICdwYWNrYWdlOnZpZGVvX3BsYXll
+          ci92aWRlb19wbGF5ZXIuZGFydCc7CmltcG9ydCAncGFja2FnZTpjaGV3aWUvY2hld2llLmRh
+          cnQnOwppbXBvcnQgJ3BhY2thZ2U6ZmlsZV9waWNrZXIvZmlsZV9waWNrZXIuZGFydCc7Cmlt
+          cG9ydCAncGFja2FnZTpzaGFyZWRfcHJlZmVyZW5jZXMvc2hhcmVkX3ByZWZlcmVuY2VzLmRh
+          cnQnOwoKdm9pZCBtYWluKCkgewogIHJ1bkFwcChjb25zdCBLbVBsYXllckFwcCgpKTsKfQoK
+          Y2xhc3MgS21QbGF5ZXJBcHAgZXh0ZW5kcyBTdGF0ZWxlc3NXaWRnZXQgewogIGNvbnN0IEtt
+          UGxheWVyQXBwKHtzdXBlci5rZXl9KTsKCiAgQE92ZXJyaWRlCiAgV2lkZ2V0IGJ1aWxkKEJ1
+          aWxkQ29udGV4dCBjb250ZXh0KSB7CiAgICByZXR1cm4gTWF0ZXJpYWxBHAo      dGl0bGU6
+          ICdLbSBQbGF5ZXInLAogICAgICBkZWJ1Z1Nob3dDaGVja2VkTW9kZUJhbm5lcjogZmFsc2Us
+          CiAgICAgIHRoZW1lOiBUaGVtZURhdGEuZGFyayh1c2VNYXRlcmlhbDM6IHRydWUpLAogICAg
+          ICBob21lOiBjb25zdCBWaWRlb1BsYXllclNjcmVlbigpLAogICAgKTsKICB9Cn0KCmNsYXNz
+          IFZpZGVvUGxheWVyU2NyZWVuIGV4dGVuZHMgU3RhdGVmdWxXaWRnZXQgewogIGNvbnN0IFZp
+          ZGVvUGxheWVyU2NyZWVuKHtzdXBlci5rZXl9KTsKCiAgQE92ZXJyaWRlCiAgU3RhdGU8Vmlk
+          ZW9QbGF5ZXJTY3JlZW4+IGNyZWF0ZVN0YXRlKCkgPT4gX1ZpZGVvUGxheWVyU2NyZWVuU3Rh
+          dGUoKTsKfQoKY2xhc3MgX1ZpZGVvUGxheWVyU2NyZWVuU3RhdGUgZXh0ZW5kcyBTdGF0ZTxW
+          aWRlb1BsYXllclNjcmVlbj4gewogIFZpZGVvUGxheWVyQ29udHJvbGxlcj8gX3ZpZGVvUGxh
+          eWVyQ29udHJvbGxlcjsKICBDaGV3aWVDb250cm9sbGVyPyBfY2hld2llQ29udHJvbGxlcjsK
+          ICBmaW5hbCBMaXN0PE1hcDxTdHJpbmcsIFN0cmluZz4+IF9wbGF5bGlzdCA9IFtdOwoKICBA
+          T3ZlcnJpZGUKICB2b2lkIGluaXRTdGF0ZSgpIHsKICAgIHN1cGVyLmluaXRTdGF0ZSgpOwog
+          ICAgX2xvYWRQbGF5bGlzdCgpOwogIH0KCiAgRnV0dXJlPHZvaWQ+IF9sb2FkUGxheWxpc3Qo
+          KSBhc3luYyB7CiAgICBmaW5hbCBwcmVmcyA9IGF3YWl0IFNoYXJlZFByZWZlcmVuY2VzLmdl
+          dEluc3RhbmNlKCk7CiAgICBmaW5hbCBTdHJpbmc/IGRhdGEgPSBwcmVmcy5nZXRTdHJpbmco
+          J3NhdmVkX3BsYXlsaXN0Jyk7CiAgICBpZiAoZGF0YSAhPSBudWxsKSB7CiAgICAgIHNldFN0
+          YXRlKCkgewogICAgICAgIF9wbGF5bGlzdC5jbGVhcigpOwogICAgICAgIF9wbGF5bGlzdC5h
+          ZGRBbGwoCiAgICAgICAgICBMaXN0PE1hcDxTdHJpbmcsIFN0cmluZz4+LmZyb20oCiAgICAg
+          ICAgICAgIChqc29uRGVjb2RlKGRhdGEpIGFzIExpc3QpLm1hcCgoZSkgPT4gTWFwPFN0cmlu
+          ZywgU3RyaW5nPmZyb20oZSkpLAogICAgICAgICAgKSwKICAgICAgICApOwogICAgICB9KTsK
+          ICAgIH0KICB9CgogIEZ1dHVyZTx2b2lkPiBfc2F2ZVBsYXlsaXN0KCkgYXN5bmMgewogICAg
+          ZmluYWwgcHJlZnMgPSBhd2FpdCBTaGFyZWRQcmVmZXJlbmNlcy5nZXRJbnN0YW5jZSgpOwog
+          ICAgYXdhaXQgcHJlZnMuc2V0U3RyaW5nKCdzYXZlZF9wbGF5bGlzdCcsIGpzb25FbmNvZGUo
+          X3BsYXlsaXN0KSk7CiAgfQoKICBGdXR1cmU8dm9pZD4gX3BpY2tBbmRQbGF5VmlkZW8oKSBh
+          c3luYyB7CiAgICBGaWxlUGlja2VyUmVzdWx0PyByZXN1bHQgPSBhd2FpdCBGaWxlUGlja2Vy
+          LnBsYXRmb3JtLnBpY2tGaWxlcygKICAgICAgdHlwZTogRmlsZVR5cGUudmlkZW8sCiAgICAg
+          IGFsbG93TXVsdGlwbGU6IGZhbHNlLAogICAgKTsKCiAgICBpZiAocmVzdWx0ICE9IG51bGwg
+          JiYgcmVzdWx0LmZpbGVzLnNpbmdsZS5wYXRoICE9IG51bGwpIHsKICAgICAgU3RyaW5nIHBh
+          dGggPSByZXN1bHQuZmlsZXMuc2luZ2xlLnBhdGghOwogICAgICBTdHJpbmcgbmFtZSA9IHJl
+          c3VsdC5maWxlcy5zaW5nbGUubmFtZTsKCiAgICAgIF9wbGF5VmlkZW8ocGF0aCk7CgogICAg
+          ICBzZXRTdGF0ZSgpIHsKICAgICAgICBfcGxheWxpc3QucmVtb3ZlV2hlcmUoKGl0ZW0pID0+
+          IGl0ZW1bJ3BhdGgnXSA9PSBwYXRoKTsKICAgICAgICBfcGxheWxpc3QuaW5zZXJ0KDAsIHsn
+          bmFtZSc6IG5hbWUsICdwYXRoJzogcGF0aH0pOwogICAgICB9KTsKICAgICAgX3NhdmVQbGF5
+          bGlzdCgpOwogICAgfQogIH0KCgogIHZvaWQgX3BsYXlWaWRlbyhTdHJpbmcgcGF0aCkgewog
+          ICAgX2NoZXdpZUNvbnRyb2xsZXI/LmRpc3Bvc2UoKTsKICAgIF92aWRlb1BsYXllckNvbnRy
+          b2xsZXI/LmRpc3Bvc2UoKTsKCiAgICBfZGVidWdMb2coJ1BsYXlpbmc6ICdwYXRoKTsKICAg
+          IF92aWRlb1BsYXllckNvbnRyb2xsZXIgPSBWaWRlb1BsYXllckNvbnRyb2xsZXIuZmlsZShG
+          aWxlKHBhdGgpKQogICAgICAuLmluaXRpYWxpemUoKS50aGVuKChfKSB7CiAgICAgICAgc2V0
+          U3RhdGUoKSB7CiAgICAgICAgICBfY2hld2llQ29udHJvbGxlciA9IENoZXdpZUNvbnRyb2xs
+          ZXIoCiAgICAgICAgICAgIHZpZGVvUGxheWVyQ29udHJvbGxlcjogX3ZpZGVvUGxheWVyQ29u
+          dHJvbGxlciEsCiAgICAgICAgICAgIGF1dG9QbGF5OiB0cnVlLAogICAgICAgICAgICBsb29w
+          aW5nOiBmYWxzZSwKICAgICAgICAgICAgYXNwZWN0UmF0aW86IF92aWRlb1BsYXllckNvbnRy
+          b2xsZXIhLnZhbHVlLmFzcGVjdFJhdGlvLAogICAgICAgICAgICBhbGxvd1BsYXliYWNrU3Bl
+          ZWRDaGFuZ2luZzogdHJ1ZSwKICAgICAgICAgICAgYWxsb3dGdWxsU2NyZWVuOiB0cnVlLAog
+          ICAgICAgICAgKTsKICAgICAgICB9KTsKICAgICAgfSk7CiAgfQoKICB2b2lkIF9kZWJ1Z0xv
+          ZyhTdHJpbmcgbXNnKSB7fQoKICBAT3ZlcnJpZGUKICB2b2lkIGRpc3Bvc2UoKSB7CiAgICBf
+          dmlkZW9QbGF5ZXJDb250cm9sbGVyPy5kaXNwb3NlKCk7CiAgICBfY2hld2llQ29udHJvbGxl
+          cj8uZGlzcG9zZSgpOwogICAgc3VwZXIuZGlzcG9zZSgpOwogIH0KCgogIEBPdmVycmlkZQog
+          IFdpZGdldCBidWlsZChCdWlsZENvbnRleHQgY29udGV4dCkgewogICAgcmV0dXJuIFNjYWZm
+          b2xkKAogICAgICBhcHBCYXI6IEFwcEJhcigKICAgICAgICB0aXRsZTogY29uc3QgVGV4dCgn
+          S20gUGxheWVyJyksCiAgICAgICAgYWN0aW9uczogWwogICAgICAgICAgSWNvbkJ1dHRvbigK
+          ICAgICAgICAgICAgaWNvbjogY29uc3QgSWNvbihJY29ucy52aWRlb19maWxlKSwKICAgICAg
+          ICAgICAgdG9vbHRpcDogJ1BpY2sgVmlkZW8nLAogICAgICAgICAgICBvblByZXNzZWQ6IF9w
+          aWNrQW5kUGxheVZpZGVvLAogICAgICAgICAgKSwKICAgICAgICBdLAogICAgICApLAogICAg
+          ICBib2R5OiBDb2x1bW4oCiAgICAgICAgY2hpbGRyZW46IFsKICAgICAgICAgIENvbnRhaW5l
+          cigKICAgICAgICAgICAgaGVpZ2h0OiAyNjAsCiAgICAgICAgICAgIGNvbG9yOiBDb2xvcnMu
+          YmxhY2ssCiAgICAgICAgICAgIGNoaWxkOiBfY2hld2llQ29udHJvbGxlciAhPSBudWxsICYm
+          CiAgICAgICAgICAgICAgICAgICAgX2NoZXdpZUNvbnRyb2xsZXIhLnZpZGVvUGxheWVyQ29u
+          dHJvbGxlci52YWx1ZS5pc0luaXRpYWxpemVkCiAgICAgICAgICAgICAgICA/IENoZXdpZShj
+          b250cm9sbGVyOiBfY2hld2llQ29udHJvbGxlciEpCiAgICAgICAgICAgICAgICA6IGNvbnN0
+          IENlbnRlcigKICAgICAgICAgICAgICAgICAgICBjaGlsZDogVGV4dCgKICAgICAgICAgICAg
+          ICAgICAgICAgICAnTm8gVmlkZW8gUGxheWluZ1xuVGFwIFBpY2sgVmlkZW8gYWJvdmUnLAog
+          ICAgICAgICAgICAgICAgICAgICAgdGV4dEFsaWduOiBUZXh0QWxpZ24uY2VudGVyLAogICAg
+          ICAgICAgICAgICAgICAgICAgc3R5bGU6IFRleHRTdHlsZShjb2xvcjogQ29sb3JzLndoaXRl
+          NzApLAogICAgICAgICAgICAgICAgICAgICksCiAgICAgICAgICAgICAgICAgICksCiAgICAg
+          ICAgICApLAogICAgICAgICAgUGFkZGluZygKICAgICAgICAgICAgcGFkZGluZzogY29uc3Qg
+          RWRnZUluc2V0cy5zeW1tZXRyaWMoaG9yaXpvbnRhbDogMTYuMCwgdmVydGljYWw6IDguMCks
+          CiAgICAgICAgICAgIGNoaWxkOiBSb3coCiAgICAgICAgICAgICAgbWFpbkF4aXNBbGlnbm1l
+          bnQ6IE1haW5BeGlzQWxpZ25tZW50LnNwYWNlQmV0d2VlbiwKICAgICAgICAgICAgICBjaGls
+          ZHJlbjogWwogICAgICAgICAgICAgICAgY29uc3QgVGV4dCgKICAgICAgICAgICAgICAgICAg
+          J1BsYXlsaXN0ICYgSGlzdG9yeScsCiAgICAgICAgICAgICAgICAgIHN0eWxlOiBUZXh0U3R5
+          bGUoZ29udFdlaWdodDogRm9udFdlaWdodC5ib2xkLCBmb250U2l6ZTogMTYpLAogICAgICAg
+          ICAgICAgICAgKSwKICAgICAgICAgICAgICAgIFRleHRCdXR0b24oCiAgICAgICAgICAgICAg
+          ICAgIG9uUHJlc3NlZDogKCkgewogICAgICAgICAgICAgICAgICAgIHNldFN0YXRlKCkgewog
+          ICAgICAgICAgICAgICAgICAgICAgX3BsYXlsaXN0LmNsZWFyKCk7CiAgICAgICAgICAgICAg
+          ICAgICAgfSk7CiAgICAgICAgICAgICAgICAgICAgX3NhdmVQbGF5bGlzdCgpOwogICAgICAg
+          ICAgICAgICAgICB9LAogICAgICAgICAgICAgICAgICBjaGlsZDogY29uc3QgVGV4dCgnQ2xl
+          YXInLCBzdHlsZTogVGV4dFN0eWxlKGNvbG9yOiBDb2xvcnMucmVkQWNjZW50KSksCiAgICAg
+          ICAgICAgICAgICApLAogICAgICAgICAgICAgIF0sCiAgICAgICAgICAgICksCiAgICAgICAg
+          ICApLAogICAgICAgICAgRXhwYW5kZWQoCiAgICAgICAgICAgIGNoaWxkOiBfcGxheWxpc3Qu
+          aXNFbXB0eQogICAgICAgICAgICAgICAgPyBjb25zdCBDZW50ZXIoCiAgICAgICAgICAgICAg
+          ICAgICAgY2hpbGQ6IFRleHQoJ05vIHZpZGVvcyBwbGF5ZWQgeWV0Jywgc3R5bGU6IFRleHRT
+          dHlsZShjb2xvcjogQ29sb3JzLmdyZXkpKSwKICAgICAgICAgICAgICAgICAgKQogICAgICAg
+          ICAgICAgICAgOiBMaXN0Vmlldy5idWlsZGVyKAogICAgICAgICAgICAgICAgICAgIGl0ZW1D
+          b3VudDogX3BsYXlsaXN0Lmxlbmd0aCwKICAgICAgICAgICAgICAgICAgICBpdGVtQnVpbGRl
+          cjogKGNvbnRleHQsIGluZGV4KSB7CiAgICAgICAgICAgICAgICAgICAgICBmaW5hbCBpdGVt
+          ID0gX3BsYXlsaXN0W2luZGV4XTsKICAgICAgICAgICAgICAgICAgICAgIHJldHVybiBMaXN0
+          VGlsZSgKICAgICAgICAgICAgICAgICAgICAgICAgbGVhZGluZzogY29uc3QgSWNvbihJY29u
+          cy5wbGF5X2NpcmNsZV9maWxsLCBjb2xvcjogQ29sb3JzLmJsdWVBY2NlbnQpLAogICAgICAg
+          ICAgICAgICAgICAgICAgIHRpdGxlOiBUZXh0KGl0ZW1bJ25hbWUnXSA/PyAnVW5rbm93biBW
+          aWRlbycsIG1heExpbmVzOiAxKSwKICAgICAgICAgICAgICAgICAgICAgICAgc3VidGl0bGU6
+          IFRleHQoaXRlbVsicGF0aCJdID8/ICcnLCBtYXhMaW5lczogMSksCiAgICAgICAgICAgICAg
+          ICAgICAgICAgb25UYXA6ICgpIHsKICAgICAgICAgICAgICAgICAgICAgICAgICBpZiAoaXRl
+          bVsicGF0aCJdICE9IG51bGwpIHsKICAgICAgICAgICAgICAgICAgICAgICAgICAgIF9wbGF5
+          VmlkZW8oaXRlbVsicGF0aCJdISk7CiAgICAgICAgICAgICAgICAgICAgICAgICAgfQogICAg
+          ICAgICAgICAgICAgICAgICAgfSwKICAgICAgICAgICAgICAgICAgICAgICk7CiAgICAgICAg
+          ICAgICAgICAgICB9LAogICAgICAgICAgICAgICAgICApLAogICAgICAgICAgKSwKICAgICAg
+          ICBdLAogICAgICApLAogICAgKTsKICB9Cn0=
           EOF
 
-          # 5. Build Release APK
+          # Build release APK
           flutter build apk --release
 
       - name: Upload APK Artifact
