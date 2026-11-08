@@ -1,4 +1,4 @@
-name: Build Video Player APK
+name: Build KmPlayer APK
 
 on:
   push:
@@ -12,36 +12,230 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Gradle 8.4
-        uses: gradle/actions/setup-gradle@v3
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
-          gradle-version: '8.4'
+          flutter-version: '3.19.6'
+          channel: 'stable'
 
-      - name: Create Minimal App Resources
+      - name: Scaffold & Build KmPlayer
         run: |
-          mkdir -p app/src/main/res/values
-          cat << 'EOF' > app/src/main/res/values/strings.xml
-          <resources>
-              <string name="app_name">Km Player</string>
-          </resources>
-          EOF
-          cat << 'EOF' > app/src/main/res/values/themes.xml
-          <resources>
-              <style name="Theme.KmPlayer" parent="Theme.Material3.DayNight.NoActionBar" />
-          </resources>
+          # 1. Create fresh project
+          rm -rf km_player
+          flutter create --org com.km --project-name km_player km_player
+          cd km_player
+
+          # 2. Add video player and file picker dependencies
+          flutter pub add video_player chewie file_picker shared_preferences
+
+          # 3. Configure Android 10+ (API 29 minimum) in build.gradle
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 29/g' android/app/build.gradle
+
+          # 4. Write full video player UI & logic
+          cat << 'EOF' > lib/main.dart
+          import 'dart:io';
+          import 'dart:convert';
+          import 'package:flutter/material.dart';
+          import 'package:video_player/video_player.dart';
+          import 'package:chewie/chewie.dart';
+          import 'package:file_picker/file_picker.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
+
+          void main() {
+            runApp(const KmPlayerApp());
+          }
+
+          class KmPlayerApp extends StatelessWidget {
+            const KmPlayerApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'Km Player',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData.dark(useMaterial3: true),
+                home: const VideoPlayerScreen(),
+              );
+            }
+          }
+
+          class VideoPlayerScreen extends StatefulWidget {
+            const VideoPlayerScreen({super.key});
+
+            @override
+            State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
+          }
+
+          class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+            VideoPlayerController? _videoPlayerController;
+            ChewieController? _chewieController;
+            List> _playlist = [];
+
+            @override
+            void initState() {
+              super.initState();
+              _loadPlaylist();
+            }
+
+            Future<void> _loadPlaylist() async {
+              final prefs = await SharedPreferences.getInstance();
+              final String? data = prefs.getString('saved_playlist');
+              if (data != null) {
+                setState(() {
+                  _playlist = List>.from(
+                    (jsonDecode(data) as List).map((e) => Map<String, String>.from(e))
+                  );
+                });
+              }
+            }
+
+            Future<void> _savePlaylist() async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString('saved_playlist', jsonEncode(_playlist));
+            }
+
+            Future<void> _pickAndPlayVideo() async {
+              FilePickerResult? result = await FilePicker.platform.pickFiles(
+                type: FileType.video,
+                allowMultiple: false,
+              );
+
+              if (result != null && result.files.single.path != null) {
+                String path = result.files.single.path!;
+                String name = result.files.single.name;
+
+                _playVideo(path);
+
+                setState(() {
+                  _playlist.removeWhere((item) => item['path'] == path);
+                  _playlist.insert(0, {'name': name, 'path': path});
+                });
+                _savePlaylist();
+              }
+            }
+
+            void _playVideo(String path) {
+              _chewieController?.dispose();
+              _videoPlayerController?.dispose();
+
+              _videoPlayerController = VideoPlayerController.file(File(path))
+                ..initialize().then((_) {
+                  setState(() {
+                    _chewieController = ChewieController(
+                      videoPlayerController: _videoPlayerController!,
+                      autoPlay: true,
+                      looping: false,
+                      aspectRatio: _videoPlayerController!.value.aspectRatio,
+                      allowPlaybackSpeedChanging: true,
+                      allowFullScreen: true,
+                      materialProgressColors: ChewieProgressColors(
+                        playedColor: Colors.blueAccent,
+                        handleColor: Colors.blue,
+                        backgroundColor: Colors.grey,
+                        bufferedColor: Colors.white24,
+                      ),
+                    );
+                  });
+                });
+            }
+
+            @override
+            void dispose() {
+              _videoPlayerController?.dispose();
+              _chewieController?.dispose();
+              super.dispose();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: const Text('Km Player'),
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.video_file),
+                      tooltip: 'Pick Video',
+                      onPressed: _pickAndPlayVideo,
+                    ),
+                  ],
+                ),
+                body: Column(
+                  children: [
+                    Container(
+                      height: 250,
+                      color: Colors.black,
+                      child: _chewieController != null &&
+                              _chewieController!.videoPlayerController.value.isInitialized
+                          ? Chewie(controller: _chewieController!)
+                          : const Center(
+                              child: Text(
+                                'No Video Playing\nTap + to Choose Video',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                            ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Playlist & History',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _playlist.clear();
+                              });
+                              _savePlaylist();
+                            },
+                            child: const Text('Clear', style: TextStyle(color: Colors.redAccent)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _playlist.isEmpty
+                          ? const Center(
+                              child: Text('No videos played yet', style: TextStyle(color: Colors.grey)),
+                            )
+                          : ListView.builder(
+                              itemCount: _playlist.length,
+                              itemBuilder: (context, index) {
+                                final item = _playlist[index];
+                                return ListTile(
+                                  leading: const Icon(Icons.play_circle_fill, color: Colors.blueAccent),
+                                  title: Text(item['name'] ?? 'Unknown Video', maxLines: 1),
+                                  subtitle: Text(item['path'] ?? '', maxLines: 1),
+                                  onTap: () {
+                                    if (item['path'] != null) {
+                                      _playVideo(item['path']!);
+                                    }
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
           EOF
 
-      - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon
+          # 5. Build Release APK
+          flutter build apk --release
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: KmPlayer-Debug-APK
-          path: app/build/outputs/apk/debug/*.apk
+          name: KmPlayer-Release-APK
+          path: km_player/build/app/outputs/flutter-apk/app-release.apk
