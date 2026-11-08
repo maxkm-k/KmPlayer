@@ -26,8 +26,7 @@ jobs:
 
       - name: Generate Android Scaffolding
         run: |
-          flutter create --platforms=android .
-          # Ensure Android 10+ (API 29 minimum)
+          flutter create --platforms=android --project-name km_player .
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 29/g' android/app/build.gradle
 
       - name: Get Dependencies
