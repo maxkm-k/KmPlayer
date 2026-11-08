@@ -1,0 +1,16 @@
+your-repo-name/
+├── .github/
+│   └── workflows/
+│       └── build.yml      <-- Place the workflow file here
+├── app/
+│   ├── build.gradle
+│   └── src/
+│       └── main/
+│           ├── AndroidManifest.xml
+│           ├── java/
+│           │   └── com/
+│               └── km/
+│                   └── videoplayer/
+│                       ├── MainActivity.kt
+│                       └── PlaylistAdapter.kt
+└── ... (other layout and source files)
