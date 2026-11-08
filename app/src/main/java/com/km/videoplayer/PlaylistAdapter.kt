@@ -1,6 +1,5 @@
 package com.km.videoplayer
 
-import android.net.Uri
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -15,8 +14,8 @@ class PlaylistAdapter(
 ) : RecyclerView.Adapter<PlaylistAdapter.ViewHolder>() {
 
     class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-        val title: TextView = view.findViewById(id.tvVideoTitle)
-        val subtitle: TextView = view.findViewById(id.tvVideoUri)
+        val title: TextView = view.findViewById(R.id.tvVideoTitle)
+        val subtitle: TextView = view.findViewById(R.id.tvVideoUri)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
