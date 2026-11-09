@@ -572,6 +572,58 @@ jobs:
               );
             }
 
+            void _showHistorySheet() {
+              showModalBottomSheet(
+                context: context,
+                builder: (ctx) {
+                  return Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Recent Playlist History', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                            TextButton(
+                              onPressed: () {
+                                setState(() {
+                                  _playlist.clear();
+                                });
+                                _savePlaylist();
+                                Navigator.pop(ctx);
+                              },
+                              child: const Text('Clear All', style: TextStyle(color: Colors.redAccent)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      Expanded(
+                        child: _playlist.isEmpty
+                            ? const Center(child: Text('No history yet'))
+                            : ListView.builder(
+                                itemCount: _playlist.length,
+                                itemBuilder: (c, idx) {
+                                  final item = _playlist[idx];
+                                  final isAud = item['type'] == 'audio';
+                                  return ListTile(
+                                    leading: Icon(isAud ? Icons.audiotrack : Icons.movie, color: Colors.blueAccent),
+                                    title: Text(item['name']?.toString() ?? 'Unknown', maxLines: 1),
+                                    subtitle: Text(item['path']?.toString() ?? '', maxLines: 1, style: const TextStyle(fontSize: 11)),
+                                    onTap: () {
+                                      Navigator.pop(ctx);
+                                      _startPlayback(item['path'].toString(), item['name'].toString(), isAud, false);
+                                    },
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  );
+                },
+              );
+            }
+
             void _showCreatePlaylistDialog() {
               TextEditingController nameController = TextEditingController();
               showDialog(
