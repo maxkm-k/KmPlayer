@@ -148,6 +148,7 @@ jobs:
             var _allVideos = [];
             var _allAudios = [];
             var _playlist = [];
+            var _customPlaylists = {};
 
             String _currentTitle = '';
             String _currentPath = '';
@@ -195,6 +196,15 @@ jobs:
                   });
                 }
               }
+              final playlistsData = prefs.getString('km_custom_playlists');
+              if (playlistsData != null) {
+                final decodedMap = jsonDecode(playlistsData);
+                if (decodedMap is Map) {
+                  setState(() {
+                    _customPlaylists = Map.from(decodedMap);
+                  });
+                }
+              }
               final bg = prefs.getBool('km_bg_play');
               if (bg != null) {
                 setState(() {
@@ -216,6 +226,11 @@ jobs:
             Future _savePlaylist() async {
               final prefs = await SharedPreferences.getInstance();
               await prefs.setString('km_player_history', jsonEncode(_playlist));
+            }
+
+            Future _saveCustomPlaylists() async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString('km_custom_playlists', jsonEncode(_customPlaylists));
             }
 
             Future _requestPermissionsAndScan() async {
@@ -465,6 +480,17 @@ jobs:
               ]);
             }
 
+            void _enterPortraitScreen() {
+              setState(() {
+                _isFullScreen = true;
+                _isMiniPlayer = false;
+              });
+              SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+              SystemChrome.setPreferredOrientations([
+                DeviceOrientation.portraitUp,
+              ]);
+            }
+
             void _exitFullScreen() {
               setState(() {
                 _isFullScreen = false;
@@ -512,11 +538,14 @@ jobs:
                         _openedFolderPath = null;
                       });
                     }),
-                    _buildPillButton(Icons.public, 'URL Stream', _openStreamUrlDialog),
-                    _buildPillButton(Icons.refresh, 'Rescan', _requestPermissionsAndScan),
-                    _buildPillButton(Icons.playlist_play, 'Playlist', () {
-                      _showHistorySheet();
+                    _buildPillButton(Icons.playlist_play, 'Playlists', () {
+                      setState(() {
+                        _bottomTabIndex = 3;
+                        _openedFolderPath = null;
+                      });
                     }),
+                    _buildPillButton(Icons.public, 'URL', _openStreamUrlDialog),
+                    _buildPillButton(Icons.refresh, 'Scan', _requestPermissionsAndScan),
                   ],
                 ),
               );
@@ -529,69 +558,139 @@ jobs:
                 child: Column(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                       decoration: BoxDecoration(
                         color: _isDark ? const Color(0xFF252830) : const Color(0xFFF0F3F8),
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: Icon(icon, size: 22, color: _isDark ? Colors.white70 : const Color(0xFF3B4963)),
+                      child: Icon(icon, size: 20, color: _isDark ? Colors.white70 : const Color(0xFF3B4963)),
                     ),
                     const SizedBox(height: 6),
-                    Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
                   ],
                 ),
               );
             }
 
-            void _showHistorySheet() {
-              showModalBottomSheet(
+            void _showCreatePlaylistDialog() {
+              TextEditingController nameController = TextEditingController();
+              showDialog(
                 context: context,
-                builder: (ctx) {
-                  return Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('Recent Playlist History', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                            TextButton(
-                              onPressed: () {
-                                setState(() {
-                                  _playlist.clear();
-                                });
-                                _savePlaylist();
-                                Navigator.pop(ctx);
-                              },
-                              child: const Text('Clear All', style: TextStyle(color: Colors.redAccent)),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      Expanded(
-                        child: _playlist.isEmpty
-                            ? const Center(child: Text('No history yet'))
-                            : ListView.builder(
-                                itemCount: _playlist.length,
-                                itemBuilder: (c, idx) {
-                                  final item = _playlist[idx];
-                                  final isAud = item['type'] == 'audio';
-                                  return ListTile(
-                                    leading: Icon(isAud ? Icons.audiotrack : Icons.movie, color: Colors.blueAccent),
-                                    title: Text(item['name']?.toString() ?? 'Unknown', maxLines: 1),
-                                    subtitle: Text(item['path']?.toString() ?? '', maxLines: 1, style: const TextStyle(fontSize: 11)),
-                                    onTap: () {
-                                      Navigator.pop(ctx);
-                                      _startPlayback(item['path'].toString(), item['name'].toString(), isAud, false);
-                                    },
-                                  );
-                                },
-                              ),
-                      ),
-                    ],
-                  );
-                },
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Create New Playlist'),
+                  content: TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(hintText: 'Playlist name...'),
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                    ElevatedButton(
+                      onPressed: () {
+                        final title = nameController.text.trim();
+                        Navigator.pop(ctx);
+                        if (title.isNotEmpty) {
+                          setState(() {
+                            _customPlaylists[title] = [];
+                          });
+                          _saveCustomPlaylists();
+                        }
+                      },
+                      child: const Text('Create'),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            Widget _buildPlaylistsTab() {
+              final keys = _customPlaylists.keys.toList();
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.add),
+                      label: const Text('Create Custom Playlist'),
+                      onPressed: _showCreatePlaylistDialog,
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: keys.isEmpty
+                        ? const Center(child: Text('No custom playlists created yet'))
+                        : ListView.builder(
+                            itemCount: keys.length,
+                            itemBuilder: (context, index) {
+                              final playlistName = keys[index].toString();
+                              final List items = _customPlaylists[playlistName] ?? [];
+                              return ExpansionTile(
+                                leading: const Icon(Icons.featured_play_list, color: Colors.blueAccent),
+                                title: Text(playlistName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                subtitle: Text('${items.length} items'),
+                                trailing: IconButton(
+                                  icon: const Icon(Icons.delete, color: Colors.redAccent),
+                                  onPressed: () {
+                                    setState(() {
+                                      _customPlaylists.remove(playlistName);
+                                    });
+                                    _saveCustomPlaylists();
+                                  },
+                                ),
+                                children: items.isEmpty
+                                    ? [const ListTile(subtitle: Text('Playlist is empty'))]
+                                    : items.map((subItem) {
+                                        return ListTile(
+                                          title: Text(subItem['name']?.toString() ?? 'Media'),
+                                          subtitle: Text(subItem['path']?.toString() ?? '', style: const TextStyle(fontSize: 11)),
+                                          trailing: IconButton(
+                                            icon: const Icon(Icons.remove_circle_outline, size: 18),
+                                            onPressed: () {
+                                              setState(() {
+                                                items.remove(subItem);
+                                              });
+                                              _saveCustomPlaylists();
+                                            },
+                                          ),
+                                          onTap: () {
+                                            _startPlayback(subItem['path'].toString(), subItem['name'].toString(), subItem['type'] == 'audio', false);
+                                          },
+                                        );
+                                      }).toList(),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              );
+            }
+
+            void _addToCustomPlaylistPrompt(String path, String name, String type) {
+              if (_customPlaylists.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please create a playlist first in the Playlists tab!')),
+                );
+                return;
+              }
+              showDialog(
+                context: context,
+                builder: (ctx) => SimpleDialog(
+                  title: const Text('Add to Playlist'),
+                  children: _customPlaylists.keys.map((pName) {
+                    return SimpleDialogOption(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        setState(() {
+                          _customPlaylists[pName].add({'name': name, 'path': path, 'type': type});
+                        });
+                        _saveCustomPlaylists();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Added to "$pName"')),
+                        );
+                      },
+                      child: Text(pName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    );
+                  }).toList(),
+                ),
               );
             }
 
@@ -728,11 +827,14 @@ jobs:
                           _startPlayback(path, name, isAud, true);
                         } else if (val == 'play') {
                           _startPlayback(path, name, isAud, false);
+                        } else if (val == 'add') {
+                          _addToCustomPlaylistPrompt(path, name, isAud ? 'audio' : 'video');
                         }
                       },
                       itemBuilder: (c) => [
                         const PopupMenuItem(value: 'play', child: Text('Play Now')),
                         const PopupMenuItem(value: 'mini', child: Text('Play in Mini-Player')),
+                        const PopupMenuItem(value: 'add', child: Text('Add to Playlist')),
                       ],
                     ),
                     onTap: () {
@@ -906,34 +1008,34 @@ jobs:
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
                                         IconButton(
-                                          iconSize: 32,
+                                          iconSize: 30,
                                           icon: const Icon(Icons.replay_10, color: Colors.white),
                                           onPressed: () {
                                             final pos = _controller!.value.position - const Duration(seconds: 10);
                                             _controller!.seekTo(pos);
                                           },
                                         ),
-                                        const SizedBox(width: 8),
+                                        const SizedBox(width: 4),
                                         IconButton(
-                                          iconSize: 52,
+                                          iconSize: 48,
                                           icon: Icon(
                                             _controller!.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
                                             color: Colors.white,
                                           ),
                                           onPressed: _togglePlayPause,
                                         ),
-                                        const SizedBox(width: 8),
+                                        const SizedBox(width: 4),
                                         IconButton(
-                                          iconSize: 32,
+                                          iconSize: 30,
                                           icon: const Icon(Icons.forward_10, color: Colors.white),
                                           onPressed: () {
                                             final pos = _controller!.value.position + const Duration(seconds: 10);
                                             _controller!.seekTo(pos);
                                           },
                                         ),
-                                        const SizedBox(width: 8),
+                                        const SizedBox(width: 4),
                                         IconButton(
-                                          iconSize: 32,
+                                          iconSize: 30,
                                           icon: const Icon(Icons.skip_next, color: Colors.white),
                                           tooltip: 'Next Video',
                                           onPressed: _playNextMedia,
@@ -941,20 +1043,20 @@ jobs:
                                       ],
                                     ),
                                     Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
                                       child: Row(
                                         children: [
                                           Text(
                                             '${_formatDuration(_controller!.value.position)} / ${_formatDuration(_controller!.value.duration)}',
-                                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                                            style: const TextStyle(color: Colors.white70, fontSize: 11),
                                           ),
                                           const Spacer(),
                                           PopupMenuButton(
                                             child: Padding(
-                                              padding: const EdgeInsets.all(6.0),
+                                              padding: const EdgeInsets.all(4.0),
                                               child: Text(
                                                 '${_playbackSpeed}x',
-                                                style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold),
+                                                style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 12),
                                               ),
                                             ),
                                             onSelected: (spd) {
@@ -969,21 +1071,23 @@ jobs:
                                                 .toList(),
                                           ),
                                           PopupMenuButton(
-                                            icon: const Icon(Icons.zoom_in, color: Colors.white),
-                                            tooltip: 'Preset Zoom',
-                                            onSelected: (zoomVal) {
-                                              // InteractiveViewer handles pinch, preset is informative
-                                            },
+                                            icon: const Icon(Icons.zoom_in, color: Colors.white, size: 20),
+                                            tooltip: 'Zoom Presets',
+                                            onSelected: (zoomVal) {},
                                             itemBuilder: (c) => [
                                               const PopupMenuItem(value: 1.0, child: Text('1.0x Normal')),
                                               const PopupMenuItem(value: 1.5, child: Text('1.5x Zoom')),
                                               const PopupMenuItem(value: 2.0, child: Text('2.0x Zoom')),
-                                              const PopupMenuItem(value: 3.0, child: Text('3.0x Zoom')),
                                             ],
                                           ),
                                           IconButton(
-                                            icon: const Icon(Icons.fullscreen, color: Colors.white),
-                                            tooltip: 'Full Screen',
+                                            icon: const Icon(Icons.stay_current_portrait, color: Colors.white, size: 20),
+                                            tooltip: 'Portrait Mode',
+                                            onPressed: _enterPortraitScreen,
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.fullscreen, color: Colors.white, size: 22),
+                                            tooltip: 'Landscape Fullscreen',
                                             onPressed: _enterFullScreen,
                                           ),
                                         ],
@@ -1230,6 +1334,8 @@ jobs:
                 activeBody = _buildMediaListView(_allVideos);
               } else if (_bottomTabIndex == 2) {
                 activeBody = _buildMediaListView(_allAudios);
+              } else if (_bottomTabIndex == 3) {
+                activeBody = _buildPlaylistsTab();
               } else {
                 activeBody = _buildSettingsTab();
               }
@@ -1248,7 +1354,7 @@ jobs:
                     });
                     return false;
                   }
-                  return true; // exits app only if already on home local folders tab with no subfolder open
+                  return true; // exits app only on root folders screen
                 },
                 child: Scaffold(
                   appBar: AppBar(
@@ -1272,7 +1378,9 @@ jobs:
                                     ? 'Videos'
                                     : _bottomTabIndex == 2
                                         ? 'Music'
-                                        : 'Settings',
+                                        : _bottomTabIndex == 3
+                                            ? 'Playlists'
+                                            : 'Settings',
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
                           ),
                     actions: [
@@ -1298,7 +1406,7 @@ jobs:
                             _showHistorySheet();
                           } else if (value == 'settings') {
                             setState(() {
-                              _bottomTabIndex = 3;
+                              _bottomTabIndex = 4;
                             });
                           }
                         },
@@ -1329,7 +1437,7 @@ jobs:
                         )
                       : null,
                   bottomNavigationBar: BottomNavigationBar(
-                    currentIndex: _bottomTabIndex,
+                    currentIndex: _bottomTabIndex > 3 ? 3 : _bottomTabIndex,
                     type: BottomNavigationBarType.fixed,
                     selectedItemColor: Colors.blueAccent,
                     unselectedItemColor: Colors.grey,
@@ -1343,7 +1451,7 @@ jobs:
                       BottomNavigationBarItem(icon: Icon(Icons.folder), label: 'Local'),
                       BottomNavigationBarItem(icon: Icon(Icons.play_circle_outline), label: 'Video'),
                       BottomNavigationBarItem(icon: Icon(Icons.music_note), label: 'Music'),
-                      BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
+                      BottomNavigationBarItem(icon: Icon(Icons.featured_play_list), label: 'Playlist'),
                     ],
                   ),
                 ),
