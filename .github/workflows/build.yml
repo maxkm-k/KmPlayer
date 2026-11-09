@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Java 17
@@ -24,19 +24,325 @@ jobs:
           flutter-version: '3.24.5'
           channel: 'stable'
 
-      - name: Scaffold Android
+      - name: Initialize & Configure KmPlayer
         run: |
-          flutter create --platforms=android --project-name km_player .
+          rm -rf app_build
+          flutter create --org com.km --project-name km_player app_build
+          cd app_build
+
+          # Configure Android 10+ (minSdk 29, targetSdk 34)
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 29/g' android/app/build.gradle
+          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/g' android/app/build.gradle
 
-      - name: Get Dependencies
-        run: flutter pub get
+          # Add only verified stable dependencies
+          flutter pub add video_player:^2.9.2 file_picker:^8.1.4 shared_preferences:^2.3.3
 
-      - name: Build APK for Android 10+
-        run: flutter build apk --release
+          # Write clean application code using python to prevent shell variable corruption
+          python3 -c "
+code = '''import 'dart:io';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-      - name: Upload APK
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const KmPlayerApp());
+}
+
+class KmPlayerApp extends StatelessWidget {
+  const KmPlayerApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Km Player',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark(useMaterial3: true).copyWith(
+        scaffoldBackgroundColor: const Color(0xFF121212),
+        colorScheme: const ColorScheme.dark(
+          primary: Colors.blueAccent,
+          surface: Color(0xFF1E1E1E),
+        ),
+      ),
+      home: const MainPlayerScreen(),
+    );
+  }
+}
+
+class MainPlayerScreen extends StatefulWidget {
+  const MainPlayerScreen({super.key});
+
+  @override
+  State<MainPlayerScreen> createState() => _MainPlayerScreenState();
+}
+
+class _MainPlayerScreenState extends State<MainPlayerScreen> {
+  VideoPlayerController? _controller;
+  List> _playlist = [];
+  String _currentTitle = 'No Video Selected';
+  double _playbackSpeed = 1.0;
+  bool _showControls = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPlaylist();
+  }
+
+  Future<void> _loadPlaylist() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? rawData = prefs.getString('km_player_history');
+    if (rawData != null) {
+      final List decoded = jsonDecode(rawData);
+      setState(() {
+        _playlist = decoded
+            .map((item) => Map<String, String>.from(item as Map))
+            .toList();
+      });
+    }
+  }
+
+  Future<void> _savePlaylist() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('km_player_history', jsonEncode(_playlist));
+  }
+
+  Future<void> _openFilePicker() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.video,
+      allowMultiple: false,
+    );
+
+    if (result != null && result.files.single.path != null) {
+      final String filePath = result.files.single.path!;
+      final String fileName = result.files.single.name;
+
+      _startVideoPlayback(filePath, fileName);
+
+      setState(() {
+        _playlist.removeWhere((entry) => entry['path'] == filePath);
+        _playlist.insert(0, {'name': fileName, 'path': filePath});
+      });
+      _savePlaylist();
+    }
+  }
+
+  void _startVideoPlayback(String path, String name) {
+    _controller?.dispose();
+    _controller = VideoPlayerController.file(File(path))
+      ..initialize().then((_) {
+        setState(() {
+          _currentTitle = name;
+          _controller!.setPlaybackSpeed(_playbackSpeed);
+          _controller!.play();
+        });
+      });
+
+    _controller!.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '\$minutes:\$seconds';
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isReady = _controller != null && _controller!.value.isInitialized;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Km Player', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: const Color(0xFF1E1E1E),
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.video_library_rounded, color: Colors.blueAccent),
+            tooltip: 'Choose Video',
+            onPressed: _openFilePicker,
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Player Container
+          Container(
+            height: 250,
+            width: double.infinity,
+            color: Colors.black,
+            child: isReady
+                ? GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _showControls = !_showControls;
+                      });
+                    },
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        AspectRatio(
+                          aspectRatio: _controller!.value.aspectRatio,
+                          child: VideoPlayer(_controller!),
+                        ),
+                        if (_showControls)
+                          Container(
+                            color: Colors.black45,
+                            child: IconButton(
+                              iconSize: 56,
+                              icon: Icon(
+                                _controller!.value.isPlaying ? Icons.pause_circle : Icons.play_circle,
+                                color: Colors.white,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _controller!.value.isPlaying ? _controller!.pause() : _controller!.play();
+                                });
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                  )
+                : const Center(
+                    child: Text(
+                      'No video loaded\\nTap the folder icon to select a file',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white60),
+                    ),
+                  ),
+          ),
+
+          // Playback Progress & Control Bar
+          if (isReady) ...[
+            VideoProgressIndicator(
+              _controller!,
+              allowScrubbing: true,
+              colors: const VideoProgressColors(
+                playedColor: Colors.blueAccent,
+                bufferedColor: Colors.white24,
+                backgroundColor: Colors.white10,
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+              color: const Color(0xFF1E1E1E),
+              child: Row(
+                children: [
+                  Text(
+                    _formatDuration(_controller!.value.position),
+                    style: const TextStyle(fontSize: 12, color: Colors.white70),
+                  ),
+                  const Text(' / ', style: TextStyle(fontSize: 12, color: Colors.white38)),
+                  Text(
+                    _formatDuration(_controller!.value.duration),
+                    style: const TextStyle(fontSize: 12, color: Colors.white38),
+                  ),
+                  const Spacer(),
+                  PopupMenuButton<double>(
+                    tooltip: 'Speed',
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                      child: Text(
+                        '\${_playbackSpeed}x',
+                        style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    onSelected: (speed) {
+                      setState(() {
+                        _playbackSpeed = speed;
+                        _controller?.setPlaybackSpeed(speed);
+                      });
+                    },
+                    itemBuilder: (context) => [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                        .map((s) => PopupMenuItem(value: s, child: Text('\${s}x')))
+                        .toList(),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // Playlist Header
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    _currentTitle,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                TextButton.icon(
+                  icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+                  label: const Text('Clear', style: TextStyle(color: Colors.redAccent)),
+                  onPressed: () {
+                    setState(() {
+                      _playlist.clear();
+                    });
+                    _savePlaylist();
+                  },
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Colors.white10),
+
+          // Saved History List
+          Expanded(
+            child: _playlist.isEmpty
+                ? const Center(
+                    child: Text(
+                      'No recently played videos',
+                      style: TextStyle(color: Colors.white38),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _playlist.length,
+                    itemBuilder: (context, index) {
+                      final item = _playlist[index];
+                      return ListTile(
+                        leading: const Icon(Icons.play_arrow_rounded, color: Colors.blueAccent),
+                        title: Text(item['name'] ?? 'Unknown', maxLines: 1),
+                        subtitle: Text(item['path'] ?? '', maxLines: 1, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                        onTap: () {
+                          if (item['path'] != null) {
+                            _startVideoPlayback(item['path']!, item['name'] ?? 'Video');
+                          }
+                        },
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+'''
+with open('lib/main.dart', 'w') as f:
+    f.write(code)
+"
+
+          # 5. Build Release APK
+          flutter build apk --release
+
+      - name: Upload Release Artifact
         uses: actions/upload-artifact@v4
         with:
           name: KmPlayer-Release-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: app_build/build/app/outputs/flutter-apk/app-release.apk
