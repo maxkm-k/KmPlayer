@@ -24,52 +24,10 @@ jobs:
           flutter-version: '3.24.5'
           channel: 'stable'
 
-      - name: Setup Android Scaffolding & Fix Version Codes
+      - name: Scaffold Android
         run: |
-          # 1. Generate standard Android platform files
           flutter create --platforms=android --project-name km_player .
-
-          # 2. Write stable android/app/build.gradle with direct version numbers
-          cat << 'EOF' > android/app/build.gradle
-          plugins {
-              id "com.android.application"
-              id "kotlin-android"
-              id "dev.flutter.flutter-gradle-plugin"
-          }
-
-          android {
-              namespace "com.km.km_player"
-              compileSdk 34
-              ndkVersion flutter.ndkVersion
-
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-
-              kotlinOptions {
-                  jvmTarget = '17'
-              }
-
-              defaultConfig {
-                  applicationId "com.km.km_player"
-                  minSdk 29
-                  targetSdk 34
-                  versionCode 1
-                  versionName "1.0.0"
-              }
-
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.debug
-                  }
-              }
-          }
-
-          flutter {
-              source '../..'
-          }
-          EOF
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 29/g' android/app/build.gradle
 
       - name: Get Dependencies
         run: flutter pub get
