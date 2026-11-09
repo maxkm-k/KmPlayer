@@ -34,10 +34,9 @@ jobs:
           sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 35/g' android/app/build.gradle || true
           sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/g' android/app/build.gradle || true
 
-          # Enable Core Library Desugaring if needed by notifications
           flutter pub add video_player:^2.9.2 file_picker:^8.1.4 shared_preferences:^2.3.3 permission_handler:^11.3.1 flutter_local_notifications:^17.2.2
 
-          # Inject Android 10-14 Storage, Background, and Notification Permissions via Python
+          # Inject Android 10-14 Storage, Background, and Notification Permissions
           python3 -c '
           p = "android/app/src/main/AndroidManifest.xml"
           c = open(p).read()
@@ -69,6 +68,7 @@ jobs:
           import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
           final FlutterLocalNotificationsPlugin _notifPlugin = FlutterLocalNotificationsPlugin();
+          final ValueNotifier _themeNotifier = ValueNotifier(false);
 
           void main() async {
             WidgetsFlutterBinding.ensureInitialized();
@@ -100,20 +100,21 @@ jobs:
           }
 
           class _KmPlayerRootState extends State {
-            bool _isDark = false;
-
-            void _toggleTheme(bool val) {
-              setState(() {
-                _isDark = val;
+            @override
+            void initState() {
+              super.initState();
+              _themeNotifier.addListener(() {
+                if (mounted) setState(() {});
               });
             }
 
             @override
             Widget build(BuildContext context) {
+              final bool isDark = _themeNotifier.value == true;
               return MaterialApp(
                 title: 'Km Player',
                 debugShowCheckedModeBanner: false,
-                theme: _isDark
+                theme: isDark
                     ? ThemeData.dark(useMaterial3: true).copyWith(
                         scaffoldBackgroundColor: const Color(0xFF121212),
                         colorScheme: const ColorScheme.dark(
@@ -128,15 +129,13 @@ jobs:
                           surface: Color(0xFFF5F6F8),
                         ),
                       ),
-                home: MainHomeScreen(isDark: _isDark, onThemeChanged: _toggleTheme),
+                home: const MainHomeScreen(),
               );
             }
           }
 
           class MainHomeScreen extends StatefulWidget {
-            final bool isDark;
-            final Function onThemeChanged;
-            const MainHomeScreen({super.key, required this.isDark, required this.onThemeChanged});
+            const MainHomeScreen({super.key});
 
             @override
             State createState() => _MainHomeScreenState();
@@ -163,6 +162,8 @@ jobs:
             bool _isScanning = false;
             String _searchQuery = '';
             bool _isSearching = false;
+
+            bool get _isDark => _themeNotifier.value == true;
 
             @override
             void initState() {
@@ -197,6 +198,10 @@ jobs:
                 setState(() {
                   _bgPlayEnabled = bg;
                 });
+              }
+              final darkPref = prefs.getBool('km_dark_theme');
+              if (darkPref != null) {
+                _themeNotifier.value = darkPref;
               }
             }
 
@@ -409,7 +414,7 @@ jobs:
                     }),
                     _buildPillButton(Icons.folder_open, 'Pick File', _pickManualFile),
                     _buildPillButton(Icons.refresh, 'Rescan', _requestPermissionsAndScan),
-                    _buildPillButton(Icons.playlist_play, 'History', () {
+                    _buildPillButton(Icons.playlist_play, 'Playlist', () {
                       _showHistorySheet();
                     }),
                   ],
@@ -426,10 +431,10 @@ jobs:
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       decoration: BoxDecoration(
-                        color: widget.isDark ? const Color(0xFF252830) : const Color(0xFFF0F3F8),
+                        color: _isDark ? const Color(0xFF252830) : const Color(0xFFF0F3F8),
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: Icon(icon, size: 22, color: widget.isDark ? Colors.white70 : const Color(0xFF3B4963)),
+                      child: Icon(icon, size: 22, color: _isDark ? Colors.white70 : const Color(0xFF3B4963)),
                     ),
                     const SizedBox(height: 6),
                     Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
@@ -553,14 +558,14 @@ jobs:
                                 leading: Icon(
                                   Icons.folder_rounded,
                                   size: 52,
-                                  color: widget.isDark ? const Color(0xFF4A5568) : const Color(0xFFD5DCE6),
+                                  color: _isDark ? const Color(0xFF4A5568) : const Color(0xFFD5DCE6),
                                 ),
                                 title: Text(
                                   folderName.isEmpty ? 'Internal Storage' : folderName,
                                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
                                 ),
                                 subtitle: Text(
-                                  '${list.length} ${list.length == 1 ? "media" : "medias"}',
+                                  '${list.length} ${list.length == 1 ? "video" : "videos"}',
                                   style: const TextStyle(color: Colors.grey, fontSize: 13),
                                 ),
                                 onTap: () {
@@ -650,8 +655,13 @@ jobs:
                     secondary: const Icon(Icons.dark_mode),
                     title: const Text('Dark Theme'),
                     subtitle: const Text('Switch between light and dark look'),
-                    value: widget.isDark,
-                    onChanged: (val) => widget.onThemeChanged(val),
+                    value: _isDark,
+                    onChanged: (val) async {
+                      _themeNotifier.value = val;
+                      setState(() {});
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setBool('km_dark_theme', val);
+                    },
                   ),
                   SwitchListTile(
                     secondary: const Icon(Icons.headphones),
@@ -862,7 +872,7 @@ jobs:
                 child: Container(
                   height: 66,
                   decoration: BoxDecoration(
-                    color: widget.isDark ? const Color(0xFF22252A) : Colors.blueGrey.shade900,
+                    color: _isDark ? const Color(0xFF22252A) : Colors.blueGrey.shade900,
                     boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
                   ),
                   child: Row(
@@ -932,7 +942,6 @@ jobs:
             Widget build(BuildContext context) {
               final bool isReady = _controller != null && _controller!.value.isInitialized && _currentPath.isNotEmpty;
 
-              // Full-Screen Landscape View
               if (_isFullScreen && isReady) {
                 return Scaffold(
                   backgroundColor: Colors.black,
@@ -1044,7 +1053,6 @@ jobs:
                 );
               }
 
-              // Standard App View
               Widget activeBody;
               if (_bottomTabIndex == 0) {
                 activeBody = _buildFoldersTab();
