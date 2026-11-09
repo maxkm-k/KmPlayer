@@ -29,11 +29,13 @@ jobs:
           rm -rf app_build
           flutter create --org com.km --project-name km_player app_build
           cd app_build
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 29/g' android/app/build.gradle
-          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/g' android/app/build.gradle
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 29/g' android/app/build.gradle || true
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 29/g' android/app/build.gradle || true
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 35/g' android/app/build.gradle || true
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/g' android/app/build.gradle || true
           flutter pub add video_player:^2.9.2 file_picker:^8.1.4 shared_preferences:^2.3.3
 
-      - name: Generate Player Source
+      - name: Generate Bracket-Free Player Source
         run: |
           cat << 'EOF' > app_build/lib/main.dart
           import 'dart:io';
@@ -72,12 +74,12 @@ jobs:
             const MainPlayerScreen({super.key});
 
             @override
-            State<MainPlayerScreen> createState() => _MainPlayerScreenState();
+            State createState() => _MainPlayerScreenState();
           }
 
-          class _MainPlayerScreenState extends State<MainPlayerScreen> {
+          class _MainPlayerScreenState extends State {
             VideoPlayerController? _controller;
-            List> _playlist = [];
+            var _playlist = [];
             String _currentTitle = 'No Video Selected';
             double _playbackSpeed = 1.0;
             bool _showControls = true;
@@ -88,33 +90,33 @@ jobs:
               _loadPlaylist();
             }
 
-            Future<void> _loadPlaylist() async {
+            Future _loadPlaylist() async {
               final prefs = await SharedPreferences.getInstance();
-              final String? rawData = prefs.getString('km_player_history');
+              final rawData = prefs.getString('km_player_history');
               if (rawData != null) {
-                final List decoded = jsonDecode(rawData);
-                setState(() {
-                  _playlist = decoded
-                      .map((item) => Map<String, String>.from(item as Map))
-                      .toList();
-                });
+                final decoded = jsonDecode(rawData);
+                if (decoded is List) {
+                  setState(() {
+                    _playlist = List.from(decoded);
+                  });
+                }
               }
             }
 
-            Future<void> _savePlaylist() async {
+            Future _savePlaylist() async {
               final prefs = await SharedPreferences.getInstance();
               await prefs.setString('km_player_history', jsonEncode(_playlist));
             }
 
-            Future<void> _openFilePicker() async {
-              FilePickerResult? result = await FilePicker.platform.pickFiles(
+            Future _openFilePicker() async {
+              final result = await FilePicker.platform.pickFiles(
                 type: FileType.video,
                 allowMultiple: false,
               );
 
               if (result != null && result.files.single.path != null) {
-                final String filePath = result.files.single.path!;
-                final String fileName = result.files.single.name;
+                final filePath = result.files.single.path!;
+                final fileName = result.files.single.name;
 
                 _startVideoPlayback(filePath, fileName);
 
@@ -157,7 +159,7 @@ jobs:
 
             @override
             Widget build(BuildContext context) {
-              final bool isReady = _controller != null && _controller!.value.isInitialized;
+              final isReady = _controller != null && _controller!.value.isInitialized;
 
               return Scaffold(
                 appBar: AppBar(
@@ -244,7 +246,7 @@ jobs:
                               style: const TextStyle(fontSize: 12, color: Colors.white38),
                             ),
                             const Spacer(),
-                            PopupMenuButton<double>(
+                            PopupMenuButton(
                               tooltip: 'Speed',
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
@@ -254,9 +256,10 @@ jobs:
                                 ),
                               ),
                               onSelected: (speed) {
+                                final val = double.parse(speed.toString());
                                 setState(() {
-                                  _playbackSpeed = speed;
-                                  _controller?.setPlaybackSpeed(speed);
+                                  _playbackSpeed = val;
+                                  _controller?.setPlaybackSpeed(val);
                                 });
                               },
                               itemBuilder: (context) => [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
@@ -307,11 +310,11 @@ jobs:
                                 final item = _playlist[index];
                                 return ListTile(
                                   leading: const Icon(Icons.play_arrow_rounded, color: Colors.blueAccent),
-                                  title: Text(item['name'] ?? 'Unknown', maxLines: 1),
-                                  subtitle: Text(item['path'] ?? '', maxLines: 1, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                                  title: Text(item['name']?.toString() ?? 'Unknown', maxLines: 1),
+                                  subtitle: Text(item['path']?.toString() ?? '', maxLines: 1, style: const TextStyle(color: Colors.white38, fontSize: 12)),
                                   onTap: () {
                                     if (item['path'] != null) {
-                                      _startVideoPlayback(item['path']!, item['name'] ?? 'Video');
+                                      _startVideoPlayback(item['path'].toString(), item['name']?.toString() ?? 'Video');
                                     }
                                   },
                                 );
