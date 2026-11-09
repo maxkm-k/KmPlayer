@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
-import 'package:chewie/chewie.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -32,9 +31,10 @@ class VideoPlayerScreen extends StatefulWidget {
 }
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
-  VideoPlayerController? _videoPlayerController;
-  ChewieController? _chewieController;
+  VideoPlayerController? _controller;
   List> _playlist = [];
+  String _currentTitle = 'No Video Playing';
+  double _playbackSpeed = 1.0;
 
   @override
   void initState() {
@@ -44,7 +44,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _loadPlaylist() async {
     final prefs = await SharedPreferences.getInstance();
-    final String? data = prefs.getString('saved_playlist');
+    final String? data = prefs.getString('km_saved_playlist');
     if (data != null) {
       final List decoded = jsonDecode(data);
       setState(() {
@@ -57,20 +57,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _savePlaylist() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('saved_playlist', jsonEncode(_playlist));
+    await prefs.setString('km_saved_playlist', jsonEncode(_playlist));
   }
 
-  Future<void> _pickAndPlayVideo() async {
+  Future<void> _pickVideo() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.video,
       allowMultiple: false,
     );
 
     if (result != null && result.files.single.path != null) {
-      String path = result.files.single.path!;
-      String name = result.files.single.name;
+      final path = result.files.single.path!;
+      final name = result.files.single.name;
 
-      _playVideo(path);
+      _startPlayback(path, name);
 
       setState(() {
         _playlist.removeWhere((item) => item['path'] == path);
@@ -80,69 +80,135 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  void _playVideo(String path) {
-    _chewieController?.dispose();
-    _videoPlayerController?.dispose();
-
-    _videoPlayerController = VideoPlayerController.file(File(path))
+  void _startPlayback(String path, String name) {
+    _controller?.dispose();
+    _controller = VideoPlayerController.file(File(path))
       ..initialize().then((_) {
         setState(() {
-          _chewieController = ChewieController(
-            videoPlayerController: _videoPlayerController!,
-            autoPlay: true,
-            looping: false,
-            aspectRatio: _videoPlayerController!.value.aspectRatio,
-            allowPlaybackSpeedChanging: true,
-            allowFullScreen: true,
-          );
+          _currentTitle = name;
+          _controller!.setPlaybackSpeed(_playbackSpeed);
+          _controller!.play();
         });
       });
+
+    _controller!.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
   }
 
   @override
   void dispose() {
-    _videoPlayerController?.dispose();
-    _chewieController?.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isInitialized = _controller != null && _controller!.value.isInitialized;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Km Player'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.video_file),
-            tooltip: 'Pick Video',
-            onPressed: _pickAndPlayVideo,
+            icon: const Icon(Icons.video_file_outlined),
+            tooltip: 'Open Video',
+            onPressed: _pickVideo,
           ),
         ],
       ),
       body: Column(
         children: [
+          // Video Playback Area
           Container(
-            height: 250,
+            height: 240,
+            width: double.infinity,
             color: Colors.black,
-            child: _chewieController != null &&
-                    _chewieController!.videoPlayerController.value.isInitialized
-                ? Chewie(controller: _chewieController!)
+            child: isInitialized
+                ? Center(
+                    child: AspectRatio(
+                      aspectRatio: _controller!.value.aspectRatio,
+                      child: VideoPlayer(_controller!),
+                    ),
+                  )
                 : const Center(
                     child: Text(
-                      'No Video Playing\nTap the icon above to choose video',
-                      textAlign: TextAlign.center,
+                      'Tap folder icon to open video',
                       style: TextStyle(color: Colors.white70),
                     ),
                   ),
           ),
+
+          // Player Control Bar
+          if (isInitialized) ...[
+            VideoProgressIndicator(
+              _controller!,
+              allowScrubbing: true,
+              colors: const VideoProgressColors(
+                playedColor: Colors.blueAccent,
+                bufferedColor: Colors.white24,
+                backgroundColor: Colors.grey,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0),
+              child: Row(
+                children: [
+                  Text(
+                    _formatDuration(_controller!.value.position),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  const Text(' / ', style: TextStyle(fontSize: 12)),
+                  Text(
+                    _formatDuration(_controller!.value.duration),
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: Icon(_controller!.value.isPlaying ? Icons.pause : Icons.play_arrow),
+                    onPressed: () {
+                      setState(() {
+                        _controller!.value.isPlaying ? _controller!.pause() : _controller!.play();
+                      });
+                    },
+                  ),
+                  PopupMenuButton<double>(
+                    tooltip: 'Playback Speed',
+                    icon: const Icon(Icons.speed),
+                    onSelected: (speed) {
+                      setState(() {
+                        _playbackSpeed = speed;
+                        _controller?.setPlaybackSpeed(speed);
+                      });
+                    },
+                    itemBuilder: (context) => [
+                      0.5, 0.75, 1.0, 1.25, 1.5, 2.0
+                    ].map((s) => PopupMenuItem(value: s, child: Text('${s}x'))).toList(),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // Title & Playlist Header
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'Playlist & History',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                Expanded(
+                  child: Text(
+                    _currentTitle,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 TextButton(
                   onPressed: () {
@@ -151,11 +217,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                     });
                     _savePlaylist();
                   },
-                  child: const Text('Clear', style: TextStyle(color: Colors.redAccent)),
+                  child: const Text('Clear History', style: TextStyle(color: Colors.redAccent)),
                 ),
               ],
             ),
           ),
+          const Divider(),
+
+          // Persistent Playlist History List
           Expanded(
             child: _playlist.isEmpty
                 ? const Center(
@@ -166,12 +235,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                     itemBuilder: (context, index) {
                       final item = _playlist[index];
                       return ListTile(
-                        leading: const Icon(Icons.play_circle_fill, color: Colors.blueAccent),
-                        title: Text(item['name'] ?? 'Unknown Video', maxLines: 1),
+                        leading: const Icon(Icons.movie, color: Colors.blueAccent),
+                        title: Text(item['name'] ?? 'Unknown', maxLines: 1),
                         subtitle: Text(item['path'] ?? '', maxLines: 1),
                         onTap: () {
                           if (item['path'] != null) {
-                            _playVideo(item['path']!);
+                            _startPlayback(item['path']!, item['name'] ?? 'Video');
                           }
                         },
                       );
