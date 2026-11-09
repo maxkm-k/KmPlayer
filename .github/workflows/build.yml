@@ -36,11 +36,12 @@ jobs:
 
           flutter pub add video_player:^2.9.2 file_picker:^8.1.4 shared_preferences:^2.3.3 permission_handler:^11.3.1 flutter_local_notifications:^17.2.2
 
-          # Inject Android 10-14 Storage, Background, and Notification Permissions
           python3 -c '
           p = "android/app/src/main/AndroidManifest.xml"
           c = open(p).read()
           perms = """<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
               <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
@@ -50,7 +51,7 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
               <uses-permission android:name="android.permission.WAKE_LOCK"/>"""
           c = c.replace("<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">", perms, 1)
-          c = c.replace("<application", "<application android:requestLegacyExternalStorage=\"true\"", 1)
+          c = c.replace("<application", "<application android:requestLegacyExternalStorage=\"true\" android:usesCleartextTraffic=\"true\"", 1)
           open(p, "w").write(c)
           '
 
@@ -159,6 +160,7 @@ jobs:
             bool _isFullScreen = false;
             bool _showControls = true;
             bool _bgPlayEnabled = true;
+            bool _networkAllowed = true;
             bool _isScanning = false;
             String _searchQuery = '';
             bool _isSearching = false;
@@ -197,6 +199,12 @@ jobs:
               if (bg != null) {
                 setState(() {
                   _bgPlayEnabled = bg;
+                });
+              }
+              final net = prefs.getBool('km_net_allowed');
+              if (net != null) {
+                setState(() {
+                  _networkAllowed = net;
                 });
               }
               final darkPref = prefs.getBool('km_dark_theme');
@@ -305,6 +313,75 @@ jobs:
               }
             }
 
+            Future _openStreamUrlDialog() async {
+              if (!_networkAllowed) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Network connection is currently revoked in Settings!')),
+                );
+                return;
+              }
+              TextEditingController urlController = TextEditingController();
+              showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Play Video from URL'),
+                  content: TextField(
+                    controller: urlController,
+                    decoration: const InputDecoration(hintText: 'Enter direct stream URL (http/https/rtsp)'),
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                    ElevatedButton(
+                      onPressed: () {
+                        final url = urlController.text.trim();
+                        Navigator.pop(ctx);
+                        if (url.isNotEmpty) {
+                          _startNetworkStreamPlayback(url);
+                        }
+                      },
+                      child: const Text('Play Stream'),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            void _startNetworkStreamPlayback(String url) {
+              _controller?.dispose();
+              final uri = Uri.parse(url);
+              _controller = VideoPlayerController.networkUrl(
+                uri,
+                videoPlayerOptions: VideoPlayerOptions(
+                  allowBackgroundPlayback: _bgPlayEnabled,
+                  mixWithOthers: false,
+                ),
+              )..initialize().then((_) {
+                  setState(() {
+                    _currentTitle = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : 'Network Stream';
+                    _currentPath = url;
+                    _isAudio = false;
+                    _isMiniPlayer = false;
+                    _controller!.setPlaybackSpeed(_playbackSpeed);
+                    _controller!.play();
+                  });
+                  showPlayingNotification(_currentTitle, 'Streaming');
+                });
+
+              _controller!.addListener(() {
+                if (mounted) setState(() {});
+              });
+
+              setState(() {
+                _playlist.removeWhere((entry) => entry['path'] == url);
+                _playlist.insert(0, {
+                  'name': _currentTitle,
+                  'path': url,
+                  'type': 'video',
+                });
+              });
+              _savePlaylist();
+            }
+
             void _startPlayback(String path, String name, bool isAudioFile, bool startMini) {
               _controller?.dispose();
               _controller = VideoPlayerController.file(
@@ -338,6 +415,29 @@ jobs:
                 });
               });
               _savePlaylist();
+            }
+
+            void _playNextMedia() {
+              if (_currentPath.isEmpty) return;
+              List activeList = _allVideos;
+              if (_bottomTabIndex == 2) {
+                activeList = _allAudios;
+              } else if (_openedFolderPath != null) {
+                activeList = _folders[_openedFolderPath] ?? _allVideos;
+              }
+
+              final idx = activeList.indexWhere((item) => item['path'] == _currentPath);
+              if (idx != -1 && idx + 1 < activeList.length) {
+                final nextItem = activeList[idx + 1];
+                final nPath = nextItem['path'].toString();
+                final nName = nextItem['name'].toString();
+                final nAud = nextItem['type'] == 'audio';
+                _startPlayback(nPath, nName, nAud, _isMiniPlayer);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Reached end of folder/list')),
+                );
+              }
             }
 
             void _togglePlayPause() {
@@ -412,7 +512,7 @@ jobs:
                         _openedFolderPath = null;
                       });
                     }),
-                    _buildPillButton(Icons.folder_open, 'Pick File', _pickManualFile),
+                    _buildPillButton(Icons.public, 'URL Stream', _openStreamUrlDialog),
                     _buildPillButton(Icons.refresh, 'Rescan', _requestPermissionsAndScan),
                     _buildPillButton(Icons.playlist_play, 'Playlist', () {
                       _showHistorySheet();
@@ -649,7 +749,7 @@ jobs:
                 children: [
                   const Padding(
                     padding: EdgeInsets.all(8.0),
-                    child: Text('Player & App Settings', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    child: Text('Player & Network Settings', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   ),
                   SwitchListTile(
                     secondary: const Icon(Icons.dark_mode),
@@ -676,6 +776,22 @@ jobs:
                       await prefs.setBool('km_bg_play', val);
                     },
                   ),
+                  SwitchListTile(
+                    secondary: Icon(Icons.network_check, color: _networkAllowed ? Colors.green : Colors.red),
+                    title: const Text('Allow Network Connections'),
+                    subtitle: Text(_networkAllowed ? 'Network streams enabled (Revoke to block)' : 'Network access is currently revoked'),
+                    value: _networkAllowed,
+                    onChanged: (val) async {
+                      setState(() {
+                        _networkAllowed = val;
+                      });
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setBool('km_net_allowed', val);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(val ? 'Network connection enabled' : 'Network connection revoked')),
+                      );
+                    },
+                  ),
                   ListTile(
                     leading: const Icon(Icons.sync),
                     title: const Text('Rescan Device Storage'),
@@ -696,6 +812,21 @@ jobs:
                     },
                   ),
                 ],
+              );
+            }
+
+            Widget _buildZoomableVideoArea() {
+              return InteractiveViewer(
+                panEnabled: true,
+                scaleEnabled: true,
+                minScale: 1.0,
+                maxScale: 4.0,
+                child: Center(
+                  child: AspectRatio(
+                    aspectRatio: _controller!.value.aspectRatio,
+                    child: VideoPlayer(_controller!),
+                  ),
+                ),
               );
             }
 
@@ -734,10 +865,7 @@ jobs:
                                 ],
                               )
                             else
-                              AspectRatio(
-                                aspectRatio: _controller!.value.aspectRatio,
-                                child: VideoPlayer(_controller!),
-                              ),
+                              _buildZoomableVideoArea(),
                             if (_showControls)
                               Container(
                                 color: Colors.black45,
@@ -778,30 +906,37 @@ jobs:
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
                                         IconButton(
-                                          iconSize: 36,
+                                          iconSize: 32,
                                           icon: const Icon(Icons.replay_10, color: Colors.white),
                                           onPressed: () {
                                             final pos = _controller!.value.position - const Duration(seconds: 10);
                                             _controller!.seekTo(pos);
                                           },
                                         ),
-                                        const SizedBox(width: 16),
+                                        const SizedBox(width: 8),
                                         IconButton(
-                                          iconSize: 56,
+                                          iconSize: 52,
                                           icon: Icon(
                                             _controller!.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
                                             color: Colors.white,
                                           ),
                                           onPressed: _togglePlayPause,
                                         ),
-                                        const SizedBox(width: 16),
+                                        const SizedBox(width: 8),
                                         IconButton(
-                                          iconSize: 36,
+                                          iconSize: 32,
                                           icon: const Icon(Icons.forward_10, color: Colors.white),
                                           onPressed: () {
                                             final pos = _controller!.value.position + const Duration(seconds: 10);
                                             _controller!.seekTo(pos);
                                           },
+                                        ),
+                                        const SizedBox(width: 8),
+                                        IconButton(
+                                          iconSize: 32,
+                                          icon: const Icon(Icons.skip_next, color: Colors.white),
+                                          tooltip: 'Next Video',
+                                          onPressed: _playNextMedia,
                                         ),
                                       ],
                                     ),
@@ -832,6 +967,19 @@ jobs:
                                             itemBuilder: (c) => [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
                                                 .map((s) => PopupMenuItem(value: s, child: Text('${s}x')))
                                                 .toList(),
+                                          ),
+                                          PopupMenuButton(
+                                            icon: const Icon(Icons.zoom_in, color: Colors.white),
+                                            tooltip: 'Preset Zoom',
+                                            onSelected: (zoomVal) {
+                                              // InteractiveViewer handles pinch, preset is informative
+                                            },
+                                            itemBuilder: (c) => [
+                                              const PopupMenuItem(value: 1.0, child: Text('1.0x Normal')),
+                                              const PopupMenuItem(value: 1.5, child: Text('1.5x Zoom')),
+                                              const PopupMenuItem(value: 2.0, child: Text('2.0x Zoom')),
+                                              const PopupMenuItem(value: 3.0, child: Text('3.0x Zoom')),
+                                            ],
                                           ),
                                           IconButton(
                                             icon: const Icon(Icons.fullscreen, color: Colors.white),
@@ -916,6 +1064,10 @@ jobs:
                         onPressed: _togglePlayPause,
                       ),
                       IconButton(
+                        icon: const Icon(Icons.skip_next, color: Colors.white70, size: 22),
+                        onPressed: _playNextMedia,
+                      ),
+                      IconButton(
                         icon: const Icon(Icons.open_in_full, color: Colors.white70, size: 20),
                         onPressed: () {
                           setState(() {
@@ -943,111 +1095,129 @@ jobs:
               final bool isReady = _controller != null && _controller!.value.isInitialized && _currentPath.isNotEmpty;
 
               if (_isFullScreen && isReady) {
-                return Scaffold(
-                  backgroundColor: Colors.black,
-                  body: GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _showControls = !_showControls;
-                      });
-                    },
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Center(
-                          child: AspectRatio(
-                            aspectRatio: _controller!.value.aspectRatio,
-                            child: VideoPlayer(_controller!),
-                          ),
-                        ),
-                        if (_showControls)
-                          Container(
-                            color: Colors.black38,
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                SafeArea(
-                                  child: Row(
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.arrow_back, color: Colors.white),
-                                        onPressed: _exitFullScreen,
-                                      ),
-                                      Expanded(
-                                        child: Text(
-                                          _currentTitle,
-                                          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    IconButton(
-                                      iconSize: 44,
-                                      icon: const Icon(Icons.replay_10, color: Colors.white),
-                                      onPressed: () {
-                                        _controller!.seekTo(_controller!.value.position - const Duration(seconds: 10));
-                                      },
-                                    ),
-                                    const SizedBox(width: 28),
-                                    IconButton(
-                                      iconSize: 68,
-                                      icon: Icon(
-                                        _controller!.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                                        color: Colors.white,
-                                      ),
-                                      onPressed: _togglePlayPause,
-                                    ),
-                                    const SizedBox(width: 28),
-                                    IconButton(
-                                      iconSize: 44,
-                                      icon: const Icon(Icons.forward_10, color: Colors.white),
-                                      onPressed: () {
-                                        _controller!.seekTo(_controller!.value.position + const Duration(seconds: 10));
-                                      },
-                                    ),
-                                  ],
-                                ),
-                                SafeArea(
-                                  top: false,
-                                  child: Column(
-                                    children: [
-                                      VideoProgressIndicator(
-                                        _controller!,
-                                        allowScrubbing: true,
-                                        colors: const VideoProgressColors(
-                                          playedColor: Colors.blueAccent,
-                                          bufferedColor: Colors.white30,
-                                          backgroundColor: Colors.white12,
-                                        ),
-                                      ),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                                        child: Row(
-                                          children: [
-                                            Text(
-                                              '${_formatDuration(_controller!.value.position)} / ${_formatDuration(_controller!.value.duration)}',
-                                              style: const TextStyle(color: Colors.white),
-                                            ),
-                                            const Spacer(),
-                                            IconButton(
-                                              icon: const Icon(Icons.fullscreen_exit, color: Colors.white, size: 30),
-                                              onPressed: _exitFullScreen,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
+                return WillPopScope(
+                  onWillPop: () async {
+                    _exitFullScreen();
+                    return false;
+                  },
+                  child: Scaffold(
+                    backgroundColor: Colors.black,
+                    body: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _showControls = !_showControls;
+                        });
+                      },
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          InteractiveViewer(
+                            panEnabled: true,
+                            scaleEnabled: true,
+                            minScale: 1.0,
+                            maxScale: 4.0,
+                            child: Center(
+                              child: AspectRatio(
+                                aspectRatio: _controller!.value.aspectRatio,
+                                child: VideoPlayer(_controller!),
+                              ),
                             ),
                           ),
-                      ],
+                          if (_showControls)
+                            Container(
+                              color: Colors.black38,
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  SafeArea(
+                                    child: Row(
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.arrow_back, color: Colors.white),
+                                          onPressed: _exitFullScreen,
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            _currentTitle,
+                                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      IconButton(
+                                        iconSize: 44,
+                                        icon: const Icon(Icons.replay_10, color: Colors.white),
+                                        onPressed: () {
+                                          _controller!.seekTo(_controller!.value.position - const Duration(seconds: 10));
+                                        },
+                                      ),
+                                      const SizedBox(width: 24),
+                                      IconButton(
+                                        iconSize: 68,
+                                        icon: Icon(
+                                          _controller!.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                                          color: Colors.white,
+                                        ),
+                                        onPressed: _togglePlayPause,
+                                      ),
+                                      const SizedBox(width: 24),
+                                      IconButton(
+                                        iconSize: 44,
+                                        icon: const Icon(Icons.forward_10, color: Colors.white),
+                                        onPressed: () {
+                                          _controller!.seekTo(_controller!.value.position + const Duration(seconds: 10));
+                                        },
+                                      ),
+                                      const SizedBox(width: 12),
+                                      IconButton(
+                                        iconSize: 40,
+                                        icon: const Icon(Icons.skip_next, color: Colors.white),
+                                        onPressed: _playNextMedia,
+                                      ),
+                                    ],
+                                  ),
+                                  SafeArea(
+                                    top: false,
+                                    child: Column(
+                                      children: [
+                                        VideoProgressIndicator(
+                                          _controller!,
+                                          allowScrubbing: true,
+                                          colors: const VideoProgressColors(
+                                            playedColor: Colors.blueAccent,
+                                            bufferedColor: Colors.white30,
+                                            backgroundColor: Colors.white12,
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                                          child: Row(
+                                            children: [
+                                              Text(
+                                                '${_formatDuration(_controller!.value.position)} / ${_formatDuration(_controller!.value.duration)}',
+                                                style: const TextStyle(color: Colors.white),
+                                              ),
+                                              const Spacer(),
+                                              IconButton(
+                                                icon: const Icon(Icons.fullscreen_exit, color: Colors.white, size: 30),
+                                                onPressed: _exitFullScreen,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 );
@@ -1064,101 +1234,118 @@ jobs:
                 activeBody = _buildSettingsTab();
               }
 
-              return Scaffold(
-                appBar: AppBar(
-                  title: _isSearching
-                      ? TextField(
-                          autofocus: true,
-                          decoration: const InputDecoration(
-                            hintText: 'Search folders or files...',
-                            border: InputBorder.none,
-                          ),
-                          onChanged: (v) {
-                            setState(() {
-                              _searchQuery = v;
-                            });
-                          },
-                        )
-                      : Text(
-                          _bottomTabIndex == 0
-                              ? 'Folders'
-                              : _bottomTabIndex == 1
-                                  ? 'Videos'
-                                  : _bottomTabIndex == 2
-                                      ? 'Music'
-                                      : 'Settings',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-                        ),
-                  actions: [
-                    IconButton(
-                      icon: Icon(_isSearching ? Icons.close : Icons.search),
-                      onPressed: () {
-                        setState(() {
-                          _isSearching = !_isSearching;
-                          if (!_isSearching) _searchQuery = '';
-                        });
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.grid_view_rounded),
-                      tooltip: 'Pick File',
-                      onPressed: _pickManualFile,
-                    ),
-                    PopupMenuButton(
-                      onSelected: (value) {
-                        if (value == 'rescan') {
-                          _requestPermissionsAndScan();
-                        } else if (value == 'history') {
-                          _showHistorySheet();
-                        } else if (value == 'settings') {
-                          setState(() {
-                            _bottomTabIndex = 3;
-                          });
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        const PopupMenuItem(value: 'rescan', child: Text('Scan Media Folders')),
-                        const PopupMenuItem(value: 'history', child: Text('Recent Playlist')),
-                        const PopupMenuItem(value: 'settings', child: Text('Settings')),
-                      ],
-                    ),
-                  ],
-                ),
-                body: Column(
-                  children: [
-                    if (isReady && !_isMiniPlayer) _buildFullTopPlayer(isReady),
-                    Expanded(child: activeBody),
-                    if (isReady && _isMiniPlayer) _buildMiniPlayerDock(),
-                  ],
-                ),
-                floatingActionButton: _playlist.isNotEmpty
-                    ? FloatingActionButton(
-                        backgroundColor: Colors.blueAccent,
-                        onPressed: () {
-                          final last = _playlist.first;
-                          final isAud = last['type'] == 'audio';
-                          _startPlayback(last['path'].toString(), last['name'].toString(), isAud, false);
-                        },
-                        child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 34),
-                      )
-                    : null,
-                bottomNavigationBar: BottomNavigationBar(
-                  currentIndex: _bottomTabIndex,
-                  type: BottomNavigationBarType.fixed,
-                  selectedItemColor: Colors.blueAccent,
-                  unselectedItemColor: Colors.grey,
-                  onTap: (idx) {
+              return WillPopScope(
+                onWillPop: () async {
+                  if (_openedFolderPath != null) {
                     setState(() {
-                      _bottomTabIndex = idx;
                       _openedFolderPath = null;
                     });
-                  },
-                  items: const [
-                    BottomNavigationBarItem(icon: Icon(Icons.folder), label: 'Local'),
-                    BottomNavigationBarItem(icon: Icon(Icons.play_circle_outline), label: 'Video'),
-                    BottomNavigationBarItem(icon: Icon(Icons.music_note), label: 'Music'),
-                    BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
-                  ],
+                    return false;
+                  }
+                  if (_bottomTabIndex != 0) {
+                    setState(() {
+                      _bottomTabIndex = 0;
+                    });
+                    return false;
+                  }
+                  return true; // exits app only if already on home local folders tab with no subfolder open
+                },
+                child: Scaffold(
+                  appBar: AppBar(
+                    title: _isSearching
+                        ? TextField(
+                            autofocus: true,
+                            decoration: const InputDecoration(
+                              hintText: 'Search folders or files...',
+                              border: InputBorder.none,
+                            ),
+                            onChanged: (v) {
+                              setState(() {
+                                _searchQuery = v;
+                              });
+                            },
+                          )
+                        : Text(
+                            _bottomTabIndex == 0
+                                ? 'Folders'
+                                : _bottomTabIndex == 1
+                                    ? 'Videos'
+                                    : _bottomTabIndex == 2
+                                        ? 'Music'
+                                        : 'Settings',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+                          ),
+                    actions: [
+                      IconButton(
+                        icon: Icon(_isSearching ? Icons.close : Icons.search),
+                        onPressed: () {
+                          setState(() {
+                            _isSearching = !_isSearching;
+                            if (!_isSearching) _searchQuery = '';
+                          });
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.grid_view_rounded),
+                        tooltip: 'Pick File',
+                        onPressed: _pickManualFile,
+                      ),
+                      PopupMenuButton(
+                        onSelected: (value) {
+                          if (value == 'rescan') {
+                            _requestPermissionsAndScan();
+                          } else if (value == 'history') {
+                            _showHistorySheet();
+                          } else if (value == 'settings') {
+                            setState(() {
+                              _bottomTabIndex = 3;
+                            });
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(value: 'rescan', child: Text('Scan Media Folders')),
+                          const PopupMenuItem(value: 'history', child: Text('Recent Playlist')),
+                          const PopupMenuItem(value: 'settings', child: Text('Settings')),
+                        ],
+                      ),
+                    ],
+                  ),
+                  body: Column(
+                    children: [
+                      if (isReady && !_isMiniPlayer) _buildFullTopPlayer(isReady),
+                      Expanded(child: activeBody),
+                      if (isReady && _isMiniPlayer) _buildMiniPlayerDock(),
+                    ],
+                  ),
+                  floatingActionButton: _playlist.isNotEmpty
+                      ? FloatingActionButton(
+                          backgroundColor: Colors.blueAccent,
+                          onPressed: () {
+                            final last = _playlist.first;
+                            final isAud = last['type'] == 'audio';
+                            _startPlayback(last['path'].toString(), last['name'].toString(), isAud, false);
+                          },
+                          child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 34),
+                        )
+                      : null,
+                  bottomNavigationBar: BottomNavigationBar(
+                    currentIndex: _bottomTabIndex,
+                    type: BottomNavigationBarType.fixed,
+                    selectedItemColor: Colors.blueAccent,
+                    unselectedItemColor: Colors.grey,
+                    onTap: (idx) {
+                      setState(() {
+                        _bottomTabIndex = idx;
+                        _openedFolderPath = null;
+                      });
+                    },
+                    items: const [
+                      BottomNavigationBarItem(icon: Icon(Icons.folder), label: 'Local'),
+                      BottomNavigationBarItem(icon: Icon(Icons.play_circle_outline), label: 'Video'),
+                      BottomNavigationBarItem(icon: Icon(Icons.music_note), label: 'Music'),
+                      BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
+                    ],
+                  ),
                 ),
               );
             }
